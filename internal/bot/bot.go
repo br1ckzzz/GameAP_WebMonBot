@@ -97,6 +97,7 @@ func NewBot(cfg *config.Config, stateFile string) (*Bot, error) {
 	}
 
 	cmdHandler.SetRefreshFunc(b.RefreshDashboard)
+	cmdHandler.SetRefreshNodesFunc(b.RefreshNodesStatus)
 	cmdHandler.SetPurgeFunc(func(channelID string) (int, error) {
 		return b.PurgeChannelBotMessages(channelID, 50)
 	})
@@ -163,13 +164,21 @@ func (b *Bot) Start(ctx context.Context) error {
 		return fmt.Errorf("opening discord session: %w", err)
 	}
 
-	// Trigger first check immediately
+	// Trigger first checks immediately
 	go b.pollServers(ctx)
+	go b.pollNodes(ctx)
 
 	// Polling worker loop
 	interval := time.Duration(b.cfg.Bot.UpdateIntervalSeconds) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	nodesInterval := time.Duration(b.cfg.Discord.NodesUpdateIntervalSeconds) * time.Second
+	if nodesInterval <= 0 {
+		nodesInterval = 300 * time.Second
+	}
+	nodesTicker := time.NewTicker(nodesInterval)
+	defer nodesTicker.Stop()
 
 	for {
 		select {
@@ -178,6 +187,8 @@ func (b *Bot) Start(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			b.pollServers(ctx)
+		case <-nodesTicker.C:
+			b.pollNodes(ctx)
 		case <-b.refreshChan:
 			log.Printf("[INFO] Immediate dashboard refresh triggered.")
 			b.pollServers(ctx)
@@ -441,6 +452,18 @@ func (b *Bot) getForumChannel() string {
 		return b.cfg.Discord.ForumChannelID
 	}
 	return b.state.GetForumChannel()
+}
+
+func (b *Bot) getNodesChannel() string {
+	if b.state != nil {
+		if ch := b.state.GetNodesChannelID(); ch != "" {
+			return ch
+		}
+	}
+	if b.cfg != nil {
+		return b.cfg.Discord.NodesChannelID
+	}
+	return ""
 }
 
 func (b *Bot) getServerChannel(serverID uint64, address string, port int) string {
@@ -747,6 +770,114 @@ func (b *Bot) PurgeChannelBotMessages(channelID string, limit int) (int, error) 
 	b.state.RemoveMessagesForChannel(channelID)
 
 	return deleted, nil
+}
+
+func (b *Bot) pollNodes(ctx context.Context) {
+	if err := b.RefreshNodesStatus(ctx); err != nil {
+		log.Printf("[WARN] Failed to refresh nodes status: %v", err)
+	}
+}
+
+// RefreshNodesStatus triggers a manual or scheduled refresh of the host nodes monitoring embed.
+func (b *Bot) RefreshNodesStatus(ctx context.Context) error {
+	return b.UpdateNodesStatus(ctx)
+}
+
+// UpdateNodesStatus fetches nodes from GameAP, enriches latency, and updates Discord message.
+func (b *Bot) UpdateNodesStatus(ctx context.Context) error {
+	channelID := b.getNodesChannel()
+	if channelID == "" {
+		return nil
+	}
+
+	timeoutSec := 10
+	if b.cfg != nil && b.cfg.GameAP.TimeoutSeconds > 0 {
+		timeoutSec = b.cfg.GameAP.TimeoutSeconds
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	var nodes []gameap.NodeDTO
+	var servers []gameap.PublicServerDTO
+
+	if b.gameapClient != nil && b.cfg != nil && b.cfg.GameAP.BaseURL != "" {
+		resp, err := b.gameapClient.FetchServers(pollCtx)
+		if err == nil && resp != nil {
+			nodes = resp.Nodes
+			servers = resp.Servers
+		} else if err != nil {
+			log.Printf("[WARN] Failed to fetch nodes from GameAP API: %v (falling back to config nodes if present)", err)
+		}
+	}
+
+	var configNodes []config.NodeConfig
+	var updateSec int
+	var onlineColor, offlineColor string
+	if b.cfg != nil {
+		configNodes = b.cfg.Nodes
+		updateSec = b.cfg.Discord.NodesUpdateIntervalSeconds
+		onlineColor = b.cfg.Bot.EmbedColorOnline
+		offlineColor = b.cfg.Bot.EmbedColorOffline
+	}
+	enriched := EnrichNodeStatuses(nodes, servers, configNodes)
+	if len(enriched) == 0 {
+		return nil
+	}
+
+	embed := RenderNodesStatusEmbed(enriched, updateSec, onlineColor, offlineColor)
+	components := BuildNodesStatusComponents()
+
+	return b.syncNodesDiscordMessage(channelID, embed, components)
+}
+
+func (b *Bot) syncNodesDiscordMessage(channelID string, embed *discordgo.MessageEmbed, components []discordgo.MessageComponent) error {
+	if b.session == nil {
+		return nil
+	}
+
+	var msgID string
+	if b.state != nil {
+		msgID = b.state.GetNodesMessageID()
+	}
+
+	if msgID != "" {
+		edit := &discordgo.MessageEdit{
+			ID:         msgID,
+			Channel:    channelID,
+			Embeds:     &[]*discordgo.MessageEmbed{embed},
+			Components: &components,
+		}
+		_, err := b.session.ChannelMessageEditComplex(edit)
+		if err == nil {
+			return nil
+		}
+
+		if !isMessageDeletedError(err) {
+			log.Printf("[WARN] Transient error editing nodes message %s in channel %s: %v", msgID, channelID, err)
+			return err
+		}
+
+		log.Printf("[INFO] Existing nodes status message %s was deleted from channel %s, recreating...", msgID, channelID)
+		if b.state != nil {
+			_ = b.state.SetNodesMessageID("")
+		}
+	}
+
+	send := &discordgo.MessageSend{
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: components,
+	}
+	msg, err := b.session.ChannelMessageSendComplex(channelID, send)
+	if err != nil {
+		log.Printf("[ERROR] Failed to send nodes status message to channel %s: %v", channelID, err)
+		return fmt.Errorf("sending nodes status message: %w", err)
+	}
+
+	if b.state != nil {
+		_ = b.state.SetNodesMessageID(msg.ID)
+		_ = b.state.Save()
+	}
+	return nil
 }
 
 func isMessageDeletedError(err error) bool {

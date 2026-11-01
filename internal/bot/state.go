@@ -94,6 +94,9 @@ func (s *State) Save() error {
 
 // SaveLocked writes state to disk without acquiring the mutex (caller must hold s.mu).
 func (s *State) SaveLocked() error {
+	if s.filePath == "" {
+		return nil
+	}
 	s.LastUpdated = time.Now()
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
