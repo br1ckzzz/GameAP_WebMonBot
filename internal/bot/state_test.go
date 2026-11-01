@@ -285,3 +285,62 @@ func TestCustomServerState(t *testing.T) {
 		t.Fatalf("expected 0 custom servers after removal")
 	}
 }
+
+func TestNodesStatePersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "state_nodes_test.json")
+
+	s := LoadState(stateFile)
+	if s.GetNodesChannelID() != "" {
+		t.Fatalf("expected empty nodes channel ID, got %s", s.GetNodesChannelID())
+	}
+	if s.GetNodesMessageID() != "" {
+		t.Fatalf("expected empty nodes message ID, got %s", s.GetNodesMessageID())
+	}
+
+	if err := s.SetNodesChannelID("ch_nodes_100"); err != nil {
+		t.Fatalf("SetNodesChannelID failed: %v", err)
+	}
+	if err := s.SetNodesMessageID("msg_nodes_200"); err != nil {
+		t.Fatalf("SetNodesMessageID failed: %v", err)
+	}
+
+	if s.GetNodesChannelID() != "ch_nodes_100" {
+		t.Errorf("expected ch_nodes_100, got %s", s.GetNodesChannelID())
+	}
+	if s.GetNodesMessageID() != "msg_nodes_200" {
+		t.Errorf("expected msg_nodes_200, got %s", s.GetNodesMessageID())
+	}
+
+	// Changing channel ID should reset message ID
+	if err := s.SetNodesChannelID("ch_nodes_new"); err != nil {
+		t.Fatalf("SetNodesChannelID failed: %v", err)
+	}
+	if s.GetNodesChannelID() != "ch_nodes_new" {
+		t.Errorf("expected ch_nodes_new, got %s", s.GetNodesChannelID())
+	}
+	if s.GetNodesMessageID() != "" {
+		t.Errorf("expected empty message ID after channel change, got %s", s.GetNodesMessageID())
+	}
+
+	// Re-set message ID and reload from disk
+	_ = s.SetNodesMessageID("msg_nodes_300")
+	s2 := LoadState(stateFile)
+	if s2.GetNodesChannelID() != "ch_nodes_new" {
+		t.Errorf("reloaded channel ID mismatch: %s", s2.GetNodesChannelID())
+	}
+	if s2.GetNodesMessageID() != "msg_nodes_300" {
+		t.Errorf("reloaded message ID mismatch: %s", s2.GetNodesMessageID())
+	}
+
+	// Clear channel ID
+	if err := s2.SetNodesChannelID("clear"); err != nil {
+		t.Fatalf("SetNodesChannelID clear failed: %v", err)
+	}
+	if s2.GetNodesChannelID() != "" {
+		t.Errorf("expected empty channel ID after clear, got %s", s2.GetNodesChannelID())
+	}
+	if s2.GetNodesMessageID() != "" {
+		t.Errorf("expected empty message ID after clear, got %s", s2.GetNodesMessageID())
+	}
+}

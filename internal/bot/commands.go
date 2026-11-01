@@ -27,8 +27,9 @@ type CommandHandler struct {
 	refreshChan     chan struct{}
 	alertsTracker   *alerts.Tracker
 	lastManual      time.Time
-	refreshFunc     func(ctx context.Context) error
-	purgeFunc       func(channelID string) (int, error)
+	refreshFunc      func(ctx context.Context) error
+	refreshNodesFunc func(ctx context.Context) error
+	purgeFunc        func(channelID string) (int, error)
 	cachedServersMu sync.RWMutex
 	cachedServers   map[uint64]gameap.PublicServerDTO
 	cachedByAddr    map[string]gameap.PublicServerDTO
@@ -98,6 +99,13 @@ func (h *CommandHandler) SetPurgeFunc(fn func(channelID string) (int, error)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.purgeFunc = fn
+}
+
+// SetRefreshNodesFunc assigns the callback for executing an immediate nodes status refresh.
+func (h *CommandHandler) SetRefreshNodesFunc(fn func(ctx context.Context) error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.refreshNodesFunc = fn
 }
 
 // SetAlertsTracker sets the alert tracker reference for dynamic alert configuration.
@@ -388,6 +396,28 @@ func (h *CommandHandler) GetSlashCommands() []*discordgo.ApplicationCommand {
 						},
 					},
 				},
+				{
+					Name:        "nodes_channel",
+					Description: "Привязать канал для мониторинга выделенных серверов (Нод)",
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionChannel,
+							Name:        "channel",
+							Description: "Текстовый канал для статуса нод (по умолчанию: текущий)",
+							Required:    false,
+							ChannelTypes: []discordgo.ChannelType{
+								discordgo.ChannelTypeGuildText,
+							},
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionBoolean,
+							Name:        "unbind",
+							Description: "Отвязать канал статуса нод",
+							Required:    false,
+						},
+					},
+				},
 			},
 		},
 	}
@@ -632,6 +662,20 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 					Value:  serversText,
 					Inline: false,
 				},
+				{
+					Name: "🖥️ Состояние нод (выделенных серверов)",
+					Value: func() string {
+						nodesCh := h.state.GetNodesChannelID()
+						if nodesCh == "" && h.cfg != nil {
+							nodesCh = h.cfg.Discord.NodesChannelID
+						}
+						if nodesCh != "" {
+							return fmt.Sprintf("<#%s>", nodesCh)
+						}
+						return "Не привязано (используйте `/mon nodes_channel channel:#канал`)"
+					}(),
+					Inline: false,
+				},
 			},
 		}
 
@@ -849,11 +893,58 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 			opts = data.Options[0].Options
 		}
 		h.handleMonGroup(s, i, opts)
+
+	case "nodes_channel":
+		var opts []*discordgo.ApplicationCommandInteractionDataOption
+		if len(data.Options) > 0 && len(data.Options[0].Options) > 0 {
+			opts = data.Options[0].Options
+		}
+		h.handleMonNodesChannel(s, i, opts)
 	}
 }
 
 func (h *CommandHandler) handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	customID := i.MessageComponentData().CustomID
+
+	if customID == "refresh_nodes_status" {
+		h.mu.Lock()
+		now := time.Now()
+		if now.Sub(h.lastManual) < 4*time.Second {
+			h.mu.Unlock()
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "⏳ Пожалуйста, подождите несколько секунд перед повторным обновлением.",
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+		h.lastManual = now
+		refreshNodesFn := h.refreshNodesFunc
+		h.mu.Unlock()
+
+		h.deferResponse(s, i)
+
+		go func() {
+			if refreshNodesFn != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := refreshNodesFn(ctx); err != nil {
+					h.editResponse(s, i, fmt.Sprintf("⚠️ Не удалось обновить статус нод: %v", err))
+					return
+				}
+			}
+			h.editResponse(s, i, "✅ Статус выделенных серверов (нод) успешно обновлен!")
+			time.Sleep(4 * time.Second)
+			appID := i.Interaction.AppID
+			if appID == "" && h.cfg != nil {
+				appID = h.cfg.Bot.ApplicationID
+			}
+			_ = s.WebhookMessageDelete(appID, i.Interaction.Token, "@original")
+		}()
+		return
+	}
 
 	if customID == "refresh_dashboard" {
 		h.mu.Lock()
@@ -1962,3 +2053,78 @@ func (h *CommandHandler) handleMonGroup(s *discordgo.Session, i *discordgo.Inter
 
 	h.editResponse(s, i, fmt.Sprintf("✅ Групповое табло для **%s** успешно опубликовано в канале <#%s>!", titleGameName, targetChannelID))
 }
+
+func (h *CommandHandler) handleMonNodesChannel(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+	unbind := false
+	targetChannelID := i.ChannelID
+
+	for _, opt := range options {
+		if opt.Name == "unbind" {
+			if b, ok := opt.Value.(bool); ok {
+				unbind = b
+			}
+		} else if opt.Name == "channel" {
+			if ch, ok := opt.Value.(string); ok && ch != "" {
+				targetChannelID = ch
+			}
+		}
+	}
+
+	if unbind {
+		if err := h.state.SetNodesChannelID("clear"); err != nil {
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: fmt.Sprintf("❌ Ошибка при отвязке канала нод: %v", err),
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "🗑️ Канал мониторинга выделенных серверов (нод) успешно отвязан.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	if err := h.state.SetNodesChannelID(targetChannelID); err != nil {
+		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: fmt.Sprintf("❌ Ошибка при привязке канала нод: %v", err),
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	msgText := fmt.Sprintf("✅ Канал для статуса выделенных серверов (нод) успешно привязан к <#%s>!\nКарточка формируется и публикуется прямо сейчас...", targetChannelID)
+	if warning := checkChannelPermissions(s, targetChannelID); warning != "" {
+		msgText += "\n\n" + warning
+	}
+
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: msgText,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+
+	h.mu.Lock()
+	refreshNodesFn := h.refreshNodesFunc
+	h.mu.Unlock()
+	if refreshNodesFn != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = refreshNodesFn(ctx)
+		}()
+	}
+}
+

@@ -38,6 +38,8 @@ type State struct {
 	AlertRoleID    string                  `json:"alert_role_id,omitempty"`
 	ForumChannelID string                  `json:"forum_channel_id,omitempty"`
 	ForumThreadIDs map[string]string       `json:"forum_thread_ids,omitempty"` // key: normalized game_code or game_name, value: thread_id
+	NodesChannelID string                  `json:"nodes_channel_id,omitempty"` // dedicated channel for host nodes status
+	NodesMessageID string                  `json:"nodes_message_id,omitempty"` // message ID of active nodes status embed
 	MessageIDs     map[string]string       `json:"message_ids"`                 // key: game_code or "summary", value: discord message ID
 	ManagerRoleIDs []string                `json:"manager_role_ids,omitempty"`  // roles allowed to manage the bot
 	LastUpdated    time.Time               `json:"last_updated"`
@@ -453,6 +455,46 @@ func (s *State) GetForumThreadIDs() map[string]string {
 		copyMap[k] = v
 	}
 	return copyMap
+}
+
+// SetNodesChannelID updates the dedicated channel ID for host nodes status.
+func (s *State) SetNodesChannelID(channelID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var newChannel string
+	if channelID != "none" && channelID != "clear" {
+		newChannel = strings.TrimSpace(channelID)
+	}
+
+	if s.NodesChannelID != newChannel {
+		s.NodesChannelID = newChannel
+		s.NodesMessageID = "" // reset message ID on channel change or unbind
+	}
+
+	return s.SaveLocked()
+}
+
+// GetNodesChannelID returns the active dedicated nodes channel ID.
+func (s *State) GetNodesChannelID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.NodesChannelID
+}
+
+// SetNodesMessageID records the Discord message ID for the nodes status message.
+func (s *State) SetNodesMessageID(msgID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.NodesMessageID = strings.TrimSpace(msgID)
+	return s.SaveLocked()
+}
+
+// GetNodesMessageID returns the active Discord message ID for the nodes status embed.
+func (s *State) GetNodesMessageID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.NodesMessageID
 }
 
 // generateCustomServerID generates a stable unique ID >= 100000 based on address and port.
