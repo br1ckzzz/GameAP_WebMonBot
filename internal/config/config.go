@@ -45,18 +45,20 @@ type DiscordConfig struct {
 
 // NodeConfig defines a dedicated host node / server for hardware and infrastructure monitoring.
 type NodeConfig struct {
-	ID         uint64   `json:"id"`
-	Name       string   `json:"name"`
-	Location   string   `json:"location,omitempty"`
-	Provider   string   `json:"provider,omitempty"`
-	CPUModel   string   `json:"cpu_model,omitempty"`
-	CPUPercent int      `json:"cpu_percent,omitempty"`
-	Protection string   `json:"protection,omitempty"`
-	Host       string   `json:"host,omitempty"`
-	Port       int      `json:"port,omitempty"`
-	IPs        []string `json:"ips,omitempty"`
-	Enabled    bool     `json:"enabled"`
+	ID           uint64   `json:"id"`
+	Name         string   `json:"name"`
+	Location     string   `json:"location,omitempty"`
+	Provider     string   `json:"provider,omitempty"`
+	CPUModel     string   `json:"cpu_model,omitempty"`
+	CPUPercent   int      `json:"cpu_percent,omitempty"`
+	Protection   string   `json:"protection,omitempty"`
+	Host         string   `json:"host,omitempty"`
+	Port         int      `json:"port,omitempty"`
+	IPs          []string `json:"ips,omitempty"`
+	ServersCount int      `json:"servers_count,omitempty"`
+	Enabled      bool     `json:"enabled"`
 }
+
 
 // NotificationsConfig specifies event alerting options.
 type NotificationsConfig struct {
