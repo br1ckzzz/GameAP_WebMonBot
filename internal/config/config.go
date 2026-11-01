@@ -31,14 +31,31 @@ type GameAPConfig struct {
 
 // DiscordConfig defines where dashboard messages should be published.
 type DiscordConfig struct {
-	GuildID            string            `json:"guild_id"`
-	DashboardChannelID string            `json:"dashboard_channel_id"`
-	GameChannels       map[string]string `json:"game_channels,omitempty"`
-	ServerChannels     map[string]string `json:"server_channels,omitempty"` // key: server ID or address:port, value: channel ID
-	ForumChannelID     string            `json:"forum_channel_id"`
-	UseForumThreads    bool              `json:"use_forum_threads"`
-	GroupByGame        bool              `json:"group_by_game"`
-	ManagerRoleIDs     []string          `json:"manager_role_ids,omitempty"`
+	GuildID                    string            `json:"guild_id"`
+	DashboardChannelID         string            `json:"dashboard_channel_id"`
+	NodesChannelID             string            `json:"nodes_channel_id,omitempty"`
+	NodesUpdateIntervalSeconds int               `json:"nodes_update_interval_seconds,omitempty"`
+	GameChannels               map[string]string `json:"game_channels,omitempty"`
+	ServerChannels             map[string]string `json:"server_channels,omitempty"` // key: server ID or address:port, value: channel ID
+	ForumChannelID             string            `json:"forum_channel_id"`
+	UseForumThreads            bool              `json:"use_forum_threads"`
+	GroupByGame                bool              `json:"group_by_game"`
+	ManagerRoleIDs             []string          `json:"manager_role_ids,omitempty"`
+}
+
+// NodeConfig defines a dedicated host node / server for hardware and infrastructure monitoring.
+type NodeConfig struct {
+	ID         uint64   `json:"id"`
+	Name       string   `json:"name"`
+	Location   string   `json:"location,omitempty"`
+	Provider   string   `json:"provider,omitempty"`
+	CPUModel   string   `json:"cpu_model,omitempty"`
+	CPUPercent int      `json:"cpu_percent,omitempty"`
+	Protection string   `json:"protection,omitempty"`
+	Host       string   `json:"host,omitempty"`
+	Port       int      `json:"port,omitempty"`
+	IPs        []string `json:"ips,omitempty"`
+	Enabled    bool     `json:"enabled"`
 }
 
 // NotificationsConfig specifies event alerting options.
@@ -68,6 +85,7 @@ type Config struct {
 	GameAP        GameAPConfig        `json:"gameap_api"`
 	Discord       DiscordConfig       `json:"discord"`
 	Notifications NotificationsConfig `json:"notifications"`
+	Nodes         []NodeConfig        `json:"nodes,omitempty"`
 }
 
 // DefaultConfig returns safe fallback defaults.
@@ -90,12 +108,14 @@ func DefaultConfig() *Config {
 			DirectQueryTimeoutMS: 1200,
 		},
 		Discord: DiscordConfig{
-			GuildID:            "",
-			DashboardChannelID: "",
-			GameChannels:       make(map[string]string),
-			ForumChannelID:     "",
-			UseForumThreads:    false,
-			GroupByGame:        true,
+			GuildID:                    "",
+			DashboardChannelID:         "",
+			NodesChannelID:             "",
+			NodesUpdateIntervalSeconds: 300,
+			GameChannels:               make(map[string]string),
+			ForumChannelID:             "",
+			UseForumThreads:            false,
+			GroupByGame:                true,
 		},
 		Notifications: NotificationsConfig{
 			Enabled:                 true,
@@ -107,13 +127,28 @@ func DefaultConfig() *Config {
 			NotifyOnUpdate:          true,
 			OfflineConfirmThreshold: 2,
 		},
+		Nodes: make([]NodeConfig, 0),
 	}
+}
+
+// LoadConfigFromBytes parses configuration from raw JSON bytes with safe defaults and env overrides.
+func LoadConfigFromBytes(data []byte) (*Config, error) {
+	cfg := DefaultConfig()
+
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("parsing config JSON: %w", err)
+		}
+	}
+
+	applyEnvOverrides(cfg)
+	sanitizeConfig(cfg)
+
+	return cfg, nil
 }
 
 // Load reads and parses configuration from the given path, with fallback to environment variables.
 func Load(configPath string) (*Config, error) {
-	cfg := DefaultConfig()
-
 	// If path not provided, check standard candidates
 	if configPath == "" {
 		if _, err := os.Stat("config.json"); err == nil {
@@ -127,18 +162,19 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
+	var data []byte
 	if configPath != "" {
-		data, err := os.ReadFile(configPath)
+		var err error
+		data, err = os.ReadFile(configPath)
 		if err != nil {
 			return nil, fmt.Errorf("reading config file %s: %w", configPath, err)
 		}
-
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("parsing config JSON from %s: %w", configPath, err)
-		}
 	}
 
-	// Environment variable overrides
+	return LoadConfigFromBytes(data)
+}
+
+func applyEnvOverrides(cfg *Config) {
 	if envToken := os.Getenv("DISCORD_BOT_TOKEN"); envToken != "" {
 		cfg.Bot.Token = envToken
 	}
@@ -157,9 +193,17 @@ func Load(configPath string) (*Config, error) {
 	if envChannel := os.Getenv("DISCORD_DASHBOARD_CHANNEL"); envChannel != "" {
 		cfg.Discord.DashboardChannelID = envChannel
 	}
+	if envNodesChannel := os.Getenv("DISCORD_NODES_CHANNEL"); envNodesChannel != "" {
+		cfg.Discord.NodesChannelID = envNodesChannel
+	}
 	if envInterval := os.Getenv("UPDATE_INTERVAL_SECONDS"); envInterval != "" {
 		if v, err := strconv.Atoi(envInterval); err == nil && v > 0 {
 			cfg.Bot.UpdateIntervalSeconds = v
+		}
+	}
+	if envNodesInterval := os.Getenv("NODES_UPDATE_INTERVAL_SECONDS"); envNodesInterval != "" {
+		if v, err := strconv.Atoi(envNodesInterval); err == nil && v > 0 {
+			cfg.Discord.NodesUpdateIntervalSeconds = v
 		}
 	}
 	if envProxy := os.Getenv("DISCORD_PROXY_URL"); envProxy != "" {
@@ -171,12 +215,18 @@ func Load(configPath string) (*Config, error) {
 	} else if envProxy := os.Getenv("HTTP_PROXY"); envProxy != "" {
 		cfg.Bot.ProxyURL = envProxy
 	}
+}
 
-	// Sanitize values
+func sanitizeConfig(cfg *Config) {
 	cfg.Bot.ProxyURL = strings.TrimSpace(cfg.Bot.ProxyURL)
 	cfg.GameAP.BaseURL = strings.TrimRight(cfg.GameAP.BaseURL, "/")
 	if cfg.Bot.UpdateIntervalSeconds < 5 {
 		cfg.Bot.UpdateIntervalSeconds = 5 // Prevent aggressive spam
+	}
+	if cfg.Discord.NodesUpdateIntervalSeconds <= 0 {
+		cfg.Discord.NodesUpdateIntervalSeconds = 300 // Default 5 minutes
+	} else if cfg.Discord.NodesUpdateIntervalSeconds < 10 {
+		cfg.Discord.NodesUpdateIntervalSeconds = 10
 	}
 	if cfg.Notifications.OfflineConfirmThreshold < 1 {
 		cfg.Notifications.OfflineConfirmThreshold = 1
@@ -184,6 +234,4 @@ func Load(configPath string) (*Config, error) {
 	if cfg.GameAP.DirectQueryTimeoutMS <= 0 {
 		cfg.GameAP.DirectQueryTimeoutMS = 1200
 	}
-
-	return cfg, nil
 }

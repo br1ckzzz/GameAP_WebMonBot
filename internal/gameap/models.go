@@ -32,13 +32,30 @@ type AnnouncementDTO struct {
 	Deadline string `json:"deadline,omitempty"` // ISO 8601 string
 }
 
+// NodeDTO represents a host machine / dedicated node monitored by GameAP.
+type NodeDTO struct {
+	ID          uint64   `json:"id"`
+	Name        string   `json:"name"`
+	Location    string   `json:"location,omitempty"`
+	Provider    string   `json:"provider,omitempty"`
+	IPs         []string `json:"ips,omitempty"`
+	GDaemonHost string   `json:"gdaemon_host,omitempty"`
+	GDaemonPort int      `json:"gdaemon_port,omitempty"`
+	CPUModel    string   `json:"cpu_model,omitempty"`
+	CPUPercent  int      `json:"cpu_percent,omitempty"`
+	Protection  string   `json:"protection,omitempty"`
+	Enabled     bool     `json:"enabled"`
+}
+
 // MonitoringResponse is the root payload returned by GET /servers or /api/servers.
 type MonitoringResponse struct {
 	Success      bool              `json:"success"`
 	TotalServers int               `json:"total_servers"`
 	OnlineCount  int               `json:"online_count"`
 	Servers      []PublicServerDTO `json:"servers"`
+	Nodes        []NodeDTO         `json:"nodes,omitempty"`
 	Announcement *AnnouncementDTO  `json:"announcement,omitempty"`
 	Timestamp    int64             `json:"timestamp"`
 	Error        string            `json:"error,omitempty"`
 }
+
