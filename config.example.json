@@ -1,0 +1,33 @@
+{
+  "bot": {
+    "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "application_id": "YOUR_DISCORD_APPLICATION_ID",
+    "update_interval_seconds": 30,
+    "status_presence": "GameAP Monitoring",
+    "embed_color_online": "#2ecc71",
+    "embed_color_offline": "#e74c3c",
+    "proxy_url": ""
+  },
+  "gameap_api": {
+    "base_url": "https://gameap.domain.com/api/plugins/monitoring",
+    "api_token": "OPTIONAL_SECRET_TOKEN_IF_ENABLED",
+    "timeout_seconds": 8
+  },
+  "discord": {
+    "guild_id": "123456789012345678",
+    "dashboard_channel_id": "123456789012345678",
+    "forum_channel_id": "",
+    "use_forum_threads": false,
+    "group_by_game": true
+  },
+  "notifications": {
+    "enabled": true,
+    "alerts_channel_id": "123456789012345678",
+    "alert_role_id": "",
+    "notify_on_offline": true,
+    "notify_on_online": true,
+    "notify_on_restart": true,
+    "notify_on_update": true,
+    "offline_confirm_threshold": 2
+  }
+}
