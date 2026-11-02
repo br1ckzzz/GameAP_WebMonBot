@@ -18,6 +18,7 @@ type BotConfig struct {
 	EmbedColorOffline     string `json:"embed_color_offline"`
 	DefaultThumbnailURL   string `json:"default_thumbnail_url,omitempty"`
 	ProxyURL              string `json:"proxy_url,omitempty"`
+	Language              string `json:"language,omitempty"`
 }
 
 // GameAPConfig holds GameAP WebMonitoring endpoint details and optional direct server query.
@@ -49,8 +50,10 @@ type NodeConfig struct {
 	Name         string   `json:"name"`
 	Location     string   `json:"location,omitempty"`
 	Provider     string   `json:"provider,omitempty"`
+	OS           string   `json:"os,omitempty"`
 	CPUModel     string   `json:"cpu_model,omitempty"`
 	CPUPercent   int      `json:"cpu_percent,omitempty"`
+	RAMPercent   int      `json:"ram_percent,omitempty"`
 	Protection   string   `json:"protection,omitempty"`
 	Host         string   `json:"host,omitempty"`
 	Port         int      `json:"port,omitempty"`
@@ -101,6 +104,7 @@ func DefaultConfig() *Config {
 			EmbedColorOnline:      "#2ecc71",
 			EmbedColorOffline:     "#e74c3c",
 			DefaultThumbnailURL:   "https://raw.githubusercontent.com/br1ckzzz/gameap_monitoring_plugin/main/icon.png?v=1.0.0",
+			Language:              "ru",
 		},
 		GameAP: GameAPConfig{
 			BaseURL:              "http://localhost:8080/api/plugins/monitoring",
@@ -180,6 +184,9 @@ func applyEnvOverrides(cfg *Config) {
 	if envToken := os.Getenv("DISCORD_BOT_TOKEN"); envToken != "" {
 		cfg.Bot.Token = envToken
 	}
+	if envLang := os.Getenv("BOT_LANGUAGE"); envLang != "" {
+		cfg.Bot.Language = envLang
+	}
 	if envAppID := os.Getenv("DISCORD_APP_ID"); envAppID != "" {
 		cfg.Bot.ApplicationID = envAppID
 	}
@@ -220,6 +227,10 @@ func applyEnvOverrides(cfg *Config) {
 }
 
 func sanitizeConfig(cfg *Config) {
+	cfg.Bot.Language = strings.ToLower(strings.TrimSpace(cfg.Bot.Language))
+	if cfg.Bot.Language != "en" {
+		cfg.Bot.Language = "ru"
+	}
 	cfg.Bot.ProxyURL = strings.TrimSpace(cfg.Bot.ProxyURL)
 	cfg.GameAP.BaseURL = strings.TrimRight(cfg.GameAP.BaseURL, "/")
 	if cfg.Bot.UpdateIntervalSeconds < 5 {

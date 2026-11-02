@@ -3,6 +3,7 @@ package gameap
 // PublicServerDTO represents an active or monitored game server.
 type PublicServerDTO struct {
 	ID         uint64 `json:"id"`
+	NodeID     uint64 `json:"node_id,omitempty"`
 	Name       string `json:"name"`
 	GameCode   string `json:"game_code"`
 	GameName   string `json:"game_name"`
@@ -41,8 +42,10 @@ type NodeDTO struct {
 	IPs         []string `json:"ips,omitempty"`
 	GDaemonHost string   `json:"gdaemon_host,omitempty"`
 	GDaemonPort int      `json:"gdaemon_port,omitempty"`
+	OS          string   `json:"os,omitempty"`
 	CPUModel    string   `json:"cpu_model,omitempty"`
 	CPUPercent  int      `json:"cpu_percent,omitempty"`
+	RAMPercent  int      `json:"ram_percent,omitempty"`
 	Protection  string   `json:"protection,omitempty"`
 	Enabled     bool     `json:"enabled"`
 }

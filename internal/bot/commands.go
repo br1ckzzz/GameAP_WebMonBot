@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -907,14 +908,23 @@ func (h *CommandHandler) handleMessageComponent(s *discordgo.Session, i *discord
 	customID := i.MessageComponentData().CustomID
 
 	if customID == "refresh_nodes_status" {
+		lang := "ru"
+		if h.cfg != nil && h.cfg.Bot.Language == "en" {
+			lang = "en"
+		}
+
 		h.mu.Lock()
 		now := time.Now()
 		if now.Sub(h.lastManual) < 4*time.Second {
 			h.mu.Unlock()
+			cooldownMsg := "⏳ Пожалуйста, подождите несколько секунд перед повторным обновлением."
+			if lang == "en" {
+				cooldownMsg = "⏳ Please wait a few seconds before refreshing again."
+			}
 			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: "⏳ Пожалуйста, подождите несколько секунд перед повторным обновлением.",
+					Content: cooldownMsg,
 					Flags:   discordgo.MessageFlagsEphemeral,
 				},
 			})
@@ -931,11 +941,19 @@ func (h *CommandHandler) handleMessageComponent(s *discordgo.Session, i *discord
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				if err := refreshNodesFn(ctx); err != nil {
-					h.editResponse(s, i, fmt.Sprintf("⚠️ Не удалось обновить статус нод: %v", err))
+					errMsg := fmt.Sprintf("⚠️ Не удалось обновить статус нод: %v", err)
+					if lang == "en" {
+						errMsg = fmt.Sprintf("⚠️ Failed to refresh nodes status: %v", err)
+					}
+					h.editResponse(s, i, errMsg)
 					return
 				}
 			}
-			h.editResponse(s, i, "✅ Статус выделенных серверов (нод) успешно обновлен!")
+			successMsg := "✅ Статус выделенных серверов (нод) успешно обновлен!"
+			if lang == "en" {
+				successMsg = "✅ Dedicated servers (nodes) status refreshed successfully!"
+			}
+			h.editResponse(s, i, successMsg)
 			time.Sleep(4 * time.Second)
 			appID := i.Interaction.AppID
 			if appID == "" && h.cfg != nil {
@@ -971,14 +989,20 @@ func (h *CommandHandler) handleMessageComponent(s *discordgo.Session, i *discord
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := refreshFn(ctx); err != nil {
-					h.editResponse(s, i, fmt.Sprintf("⚠️ Не удалось обновить табло: %v", err))
-					return
+					if errors.Is(err, ErrGameAPDegraded) {
+						h.editResponse(s, i, "⚠️ Панель GameAP временно недоступна, но табло успешно обновлено прямым опросом игровых серверов!")
+					} else {
+						h.editResponse(s, i, fmt.Sprintf("⚠️ Не удалось обновить табло: %v", err))
+						return
+					}
+				} else {
+					h.editResponse(s, i, "✅ Табло мониторинга успешно обновлено!")
 				}
 			} else {
 				h.triggerManualRefresh()
+				h.editResponse(s, i, "✅ Табло мониторинга успешно обновлено!")
 			}
 
-			h.editResponse(s, i, "✅ Табло мониторинга успешно обновлено!")
 			time.Sleep(4 * time.Second)
 			appID := i.Interaction.AppID
 			if appID == "" && h.cfg != nil {

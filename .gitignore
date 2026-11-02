@@ -17,8 +17,16 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Internal Developer Notes & Customizations
+# Internal Developer Notes, Ideas & Scratch Scripts
 DEV_BUGS_AND_FIXES.md
 dev_notes/
 .agents/
+docs/IDEAS.md
+docs/superpowers/
+docs/QUESTIONS_AND_CHECKLIST.md
+docs/SINGLE_SERVER_CARD_PLAN.md
+scratch_search.py
+test_a2s.py
+scratch/
+*.tmp
 

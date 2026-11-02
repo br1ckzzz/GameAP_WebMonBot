@@ -16,8 +16,10 @@ func TestRenderNodesStatusEmbed(t *testing.T) {
 			CountryCode:  "DE",
 			Flag:         "🇩🇪",
 			Provider:     "Datacenter Corp",
+			OS:           "🐧 Linux",
 			CPUModel:     "AMD Ryzen 9 7950X3D",
 			CPUPercent:   42,
+			RAMPercent:   55,
 			Protection:   "L4 Anti-DDoS Protection",
 			Latency:      "24 ms",
 			ServersCount: 3,
@@ -32,8 +34,10 @@ func TestRenderNodesStatusEmbed(t *testing.T) {
 			CountryCode:  "RU",
 			Flag:         "🇷🇺",
 			Provider:     "DataLine",
+			OS:           "🪟 Windows",
 			CPUModel:     "Intel Core i9-14900K",
 			CPUPercent:   15,
+			RAMPercent:   29,
 			Protection:   "StormWall L3/L4/L7",
 			Latency:      "Защищён (DDoS Filter)",
 			ServersCount: 2,
@@ -43,81 +47,220 @@ func TestRenderNodesStatusEmbed(t *testing.T) {
 		},
 	}
 
-	embed := RenderNodesStatusEmbed(nodes, 300, "#2ecc71", "#e74c3c")
-	if embed == nil {
-		t.Fatal("expected embed to be non-nil")
-	}
+	t.Run("Russian language embed", func(t *testing.T) {
+		embed := RenderNodesStatusEmbed(nodes, 300, "#2ecc71", "#e74c3c", "ru")
+		if embed == nil {
+			t.Fatal("expected embed to be non-nil")
+		}
 
-	if embed.Title != "🖥️ Состояние выделенных серверов (Нод)" {
-		t.Errorf("unexpected embed title: %q", embed.Title)
-	}
+		if embed.Title != "🖥️ Состояние выделенных серверов (Нод)" {
+			t.Errorf("unexpected embed title: %q", embed.Title)
+		}
 
-	if !strings.Contains(embed.Description, "Статус работы хост-нод") {
-		t.Errorf("unexpected embed description: %q", embed.Description)
-	}
+		if !strings.Contains(embed.Description, "Статус работы хост-нод") {
+			t.Errorf("unexpected embed description: %q", embed.Description)
+		}
 
-	// All online -> online color 0x2ecc71
-	if embed.Color != 0x2ecc71 {
-		t.Errorf("expected online color 0x2ecc71, got 0x%x", embed.Color)
-	}
+		// All online -> online color 0x2ecc71
+		if embed.Color != 0x2ecc71 {
+			t.Errorf("expected online color 0x2ecc71, got 0x%x", embed.Color)
+		}
 
-	// Check fields
-	if len(embed.Fields) != 3 { // 2 node fields + 1 summary field
-		t.Fatalf("expected 3 fields, got %d", len(embed.Fields))
-	}
+		// Check fields (2 nodes + 1 summary)
+		if len(embed.Fields) != 3 {
+			t.Fatalf("expected 3 fields, got %d", len(embed.Fields))
+		}
 
-	node1Field := embed.Fields[0]
-	if !strings.Contains(node1Field.Name, "🇩🇪") || !strings.Contains(node1Field.Name, "Ryzen 9") {
-		t.Errorf("unexpected node 1 field name: %q", node1Field.Name)
-	}
-	if !strings.Contains(node1Field.Value, "🟢 Система в норме") {
-		t.Errorf("expected online status in node 1, got: %s", node1Field.Value)
-	}
-	if !strings.Contains(node1Field.Value, "24 ms") {
-		t.Errorf("expected 24 ms ping in node 1, got: %s", node1Field.Value)
-	}
-	if !strings.Contains(node1Field.Value, "L4 Anti-DDoS Protection") {
-		t.Errorf("expected protection badge in node 1, got: %s", node1Field.Value)
-	}
+		node1Field := embed.Fields[0]
+		if !strings.Contains(node1Field.Name, "🇩🇪") || !strings.Contains(node1Field.Name, "Ryzen 9") {
+			t.Errorf("unexpected node 1 field name: %q", node1Field.Name)
+		}
+		if !strings.Contains(node1Field.Value, "🟢 Система в норме") {
+			t.Errorf("expected online status in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Локация:") || !strings.Contains(node1Field.Value, "Germany, Frankfurt") {
+			t.Errorf("expected Location in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Провайдер:") || !strings.Contains(node1Field.Value, "Datacenter Corp") {
+			t.Errorf("expected Provider in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "ОС:") || !strings.Contains(node1Field.Value, "Linux") {
+			t.Errorf("expected OS in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "IP / Хост:") || !strings.Contains(node1Field.Value, "185.189.255.10") {
+			t.Errorf("expected Host in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Память (RAM):") || !strings.Contains(node1Field.Value, "55%") {
+			t.Errorf("expected RAM in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "24 ms") {
+			t.Errorf("expected 24 ms ping in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "L4 Anti-DDoS Protection") {
+			t.Errorf("expected protection badge in node 1, got: %s", node1Field.Value)
+		}
 
-	node2Field := embed.Fields[1]
-	if !strings.Contains(node2Field.Value, "Защищён (DDoS Filter)") {
-		t.Errorf("expected DDoS filter message in node 2, got: %s", node2Field.Value)
-	}
+		node2Field := embed.Fields[1]
+		if !strings.Contains(node2Field.Value, "Защищён (DDoS Filter)") {
+			t.Errorf("expected DDoS filter message in node 2, got: %s", node2Field.Value)
+		}
+		if !strings.Contains(node2Field.Value, "🪟 Windows") {
+			t.Errorf("expected Windows OS in node 2, got: %s", node2Field.Value)
+		}
 
-	summaryField := embed.Fields[2]
-	if !strings.Contains(summaryField.Name, "Инфраструктура сети") {
-		t.Errorf("unexpected summary field name: %q", summaryField.Name)
-	}
-	if !strings.Contains(summaryField.Value, "2/2") {
-		t.Errorf("expected 2/2 active nodes in summary, got: %s", summaryField.Value)
-	}
+		summaryField := embed.Fields[2]
+		if !strings.Contains(summaryField.Name, "Инфраструктура сети") {
+			t.Errorf("unexpected summary field name: %q", summaryField.Name)
+		}
+		if !strings.Contains(summaryField.Value, "2/2") {
+			t.Errorf("expected 2/2 active nodes in summary, got: %s", summaryField.Value)
+		}
+	})
+
+	t.Run("English language embed", func(t *testing.T) {
+		embed := RenderNodesStatusEmbed(nodes, 300, "#2ecc71", "#e74c3c", "en")
+		if embed == nil {
+			t.Fatal("expected embed to be non-nil")
+		}
+
+		if embed.Title != "🖥️ Dedicated Servers Status (Nodes)" {
+			t.Errorf("unexpected embed title: %q", embed.Title)
+		}
+
+		if !strings.Contains(embed.Description, "Operational status of network host nodes") {
+			t.Errorf("unexpected embed description: %q", embed.Description)
+		}
+
+		node1Field := embed.Fields[0]
+		if !strings.Contains(node1Field.Value, "🟢 System Normal") {
+			t.Errorf("expected online status in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Location:") || !strings.Contains(node1Field.Value, "Germany, Frankfurt") {
+			t.Errorf("expected Location in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Provider:") || !strings.Contains(node1Field.Value, "Datacenter Corp") {
+			t.Errorf("expected Provider in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "OS:") || !strings.Contains(node1Field.Value, "Linux") {
+			t.Errorf("expected OS in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Host / IP:") || !strings.Contains(node1Field.Value, "185.189.255.10") {
+			t.Errorf("expected Host in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "RAM Usage:") || !strings.Contains(node1Field.Value, "55%") {
+			t.Errorf("expected RAM in node 1, got: %s", node1Field.Value)
+		}
+		if !strings.Contains(node1Field.Value, "Ping:") || !strings.Contains(node1Field.Value, "24 ms") {
+			t.Errorf("expected Ping in node 1, got: %s", node1Field.Value)
+		}
+
+		summaryField := embed.Fields[2]
+		if !strings.Contains(summaryField.Name, "Network Infrastructure") {
+			t.Errorf("unexpected summary field name: %q", summaryField.Name)
+		}
+	})
+
+	t.Run("Empty nodes list", func(t *testing.T) {
+		embedRU := RenderNodesStatusEmbed([]NodeStatus{}, 300, "#2ecc71", "#e74c3c", "ru")
+		if !strings.Contains(embedRU.Fields[0].Name, "Ожидание подключения нод") {
+			t.Errorf("unexpected empty state RU field name: %q", embedRU.Fields[0].Name)
+		}
+
+		embedEN := RenderNodesStatusEmbed([]NodeStatus{}, 300, "#2ecc71", "#e74c3c", "en")
+		if !strings.Contains(embedEN.Fields[0].Name, "Waiting for Node Connections") {
+			t.Errorf("unexpected empty state EN field name: %q", embedEN.Fields[0].Name)
+		}
+	})
+
+	t.Run("Only real data rendered - no fake CPU or RAM or Protection", func(t *testing.T) {
+		minimalNode := []NodeStatus{
+			{
+				ID:           1,
+				Name:         "Dedicated Node #1",
+				Location:     "Moscow",
+				CountryCode:  "RU",
+				Flag:         "🇷🇺",
+				Provider:     "",
+				OS:           "🪟 Windows",
+				CPUModel:     "",
+				CPUPercent:   0,
+				RAMPercent:   0,
+				Protection:   "",
+				Latency:      "15 ms",
+				ServersCount: 1,
+				IsOnline:     true,
+				Host:         "127.0.0.1",
+				Port:         31717,
+			},
+		}
+
+		embed := RenderNodesStatusEmbed(minimalNode, 300, "#2ecc71", "#e74c3c", "ru")
+		if embed == nil {
+			t.Fatal("expected embed to be non-nil")
+		}
+		field := embed.Fields[0]
+		if strings.Contains(field.Value, "Нагрузка CPU:") {
+			t.Errorf("expected no CPU load bar when CPUPercent == 0, got: %s", field.Value)
+		}
+		if strings.Contains(field.Value, "Память (RAM):") {
+			t.Errorf("expected no RAM usage bar when RAMPercent == 0, got: %s", field.Value)
+		}
+		if strings.Contains(field.Value, "Процессор:") {
+			t.Errorf("expected no CPU model when empty, got: %s", field.Value)
+		}
+		if strings.Contains(field.Value, "Защита:") {
+			t.Errorf("expected no Protection when empty, got: %s", field.Value)
+		}
+		if !strings.Contains(field.Value, "127.0.0.1") {
+			t.Errorf("expected host in field value, got: %s", field.Value)
+		}
+		if !strings.Contains(field.Value, "🪟 Windows") {
+			t.Errorf("expected OS in field value, got: %s", field.Value)
+		}
+		if !strings.Contains(field.Value, "15 ms") {
+			t.Errorf("expected Ping in field value, got: %s", field.Value)
+		}
+		if !strings.Contains(field.Value, "Игровых серверов:** 1 активных") {
+			t.Errorf("expected servers count in field value, got: %s", field.Value)
+		}
+	})
 }
 
 func TestBuildNodesStatusComponents(t *testing.T) {
-	components := BuildNodesStatusComponents()
-	if len(components) != 1 {
-		t.Fatalf("expected 1 action row, got %d", len(components))
+	tests := []struct {
+		lang          string
+		expectedLabel string
+	}{
+		{lang: "ru", expectedLabel: "Обновить статус"},
+		{lang: "en", expectedLabel: "Refresh Status"},
+		{lang: "", expectedLabel: "Обновить статус"},
 	}
 
-	row, ok := components[0].(discordgo.ActionsRow)
-	if !ok {
-		t.Fatalf("expected discordgo.ActionsRow, got %T", components[0])
-	}
+	for _, tt := range tests {
+		components := BuildNodesStatusComponents(tt.lang)
+		if len(components) != 1 {
+			t.Fatalf("expected 1 action row, got %d", len(components))
+		}
 
-	if len(row.Components) != 1 {
-		t.Fatalf("expected exactly 1 button, got %d", len(row.Components))
-	}
+		row, ok := components[0].(discordgo.ActionsRow)
+		if !ok {
+			t.Fatalf("expected discordgo.ActionsRow, got %T", components[0])
+		}
 
-	btn, ok := row.Components[0].(discordgo.Button)
-	if !ok {
-		t.Fatalf("expected discordgo.Button, got %T", row.Components[0])
-	}
+		if len(row.Components) != 1 {
+			t.Fatalf("expected exactly 1 button, got %d", len(row.Components))
+		}
 
-	if btn.CustomID != "refresh_nodes_status" {
-		t.Errorf("expected CustomID 'refresh_nodes_status', got %q", btn.CustomID)
-	}
-	if btn.Label != "Обновить статус" {
-		t.Errorf("expected Label 'Обновить статус', got %q", btn.Label)
+		btn, ok := row.Components[0].(discordgo.Button)
+		if !ok {
+			t.Fatalf("expected discordgo.Button, got %T", row.Components[0])
+		}
+
+		if btn.CustomID != "refresh_nodes_status" {
+			t.Errorf("expected CustomID 'refresh_nodes_status', got %q", btn.CustomID)
+		}
+		if btn.Label != tt.expectedLabel {
+			t.Errorf("for lang %q expected Label %q, got %q", tt.lang, tt.expectedLabel, btn.Label)
+		}
 	}
 }

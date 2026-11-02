@@ -20,8 +20,10 @@ type NodeStatus struct {
 	CountryCode  string
 	Flag         string
 	Provider     string
+	OS           string
 	CPUModel     string
 	CPUPercent   int
+	RAMPercent   int
 	Protection   string
 	Latency      string
 	ServersCount int
@@ -74,7 +76,7 @@ var (
 		Flag     string
 	}{
 		{Keywords: []string{"germany", "frankfurt", "berlin", "deutschland"}, Code: "DE", Flag: "🇩🇪"},
-		{Keywords: []string{"russia", "moscow", "petersburg", "россия", "москва", "питер", "dataline"}, Code: "RU", Flag: "🇷🇺"},
+		{Keywords: []string{"russia", "moscow", "petersburg", "россия", "москва", "питер", "dataline", "мтс", "mts"}, Code: "RU", Flag: "🇷🇺"},
 		{Keywords: []string{"kazakhstan", "almaty", "astana", "казахстан", "алматы", "астана"}, Code: "KZ", Flag: "🇰🇿"},
 		{Keywords: []string{"finland", "helsinki", "финляндия", "хельсинки"}, Code: "FI", Flag: "🇫🇮"},
 		{Keywords: []string{"netherlands", "amsterdam", "нидерланды", "амстердам"}, Code: "NL", Flag: "🇳🇱"},
@@ -91,8 +93,8 @@ var (
 
 // DetectCountryAndFlag identifies the ISO country code and flag emoji from node name or location.
 func DetectCountryAndFlag(name, location string) (countryCode, flag string) {
-	// 1. Try to extract tag from node name, e.g. [GE], [RU], [KZ]
-	matches := tagRegex.FindAllStringSubmatch(name, -1)
+	// 1. Try to extract tag from node name or location, e.g. [GE], [RU], [KZ]
+	matches := tagRegex.FindAllStringSubmatch(name+" "+location, -1)
 	for _, m := range matches {
 		if len(m) > 1 {
 			upper := strings.ToUpper(m[1])
@@ -116,32 +118,87 @@ func DetectCountryAndFlag(name, location string) (countryCode, flag string) {
 	return "GLOBAL", "🌐"
 }
 
+// FormatOS formats operating system name with modern OS emoji.
+func FormatOS(osName string) string {
+	clean := strings.ToLower(strings.TrimSpace(osName))
+	switch {
+	case strings.Contains(clean, "win"):
+		return "🪟 Windows"
+	case strings.Contains(clean, "linux") || strings.Contains(clean, "ubuntu") || strings.Contains(clean, "debian") || strings.Contains(clean, "centos") || strings.Contains(clean, "alpine") || strings.Contains(clean, "rhel"):
+		return "🐧 Linux"
+	case clean != "":
+		return fmt.Sprintf("🖥️ %s", strings.TrimSpace(osName))
+	default:
+		return ""
+	}
+}
+
 // ProbeNodeLatency tests TCP reachability to host:port with a timeout.
-// If the connection times out or is rejected (common with Anti-DDoS filtering),
-// it returns "Защищён (DDoS Filter)" instead of reporting the node offline.
-func ProbeNodeLatency(host string, port int, timeout time.Duration) string {
+// On success, it returns formatted ping in ms (e.g. "21 ms").
+// If the connection times out or fails (common with Anti-DDoS filtering),
+// it returns a localized protected filter indicator instead of marking the node offline.
+func ProbeNodeLatency(host string, port int, timeout time.Duration, lang string) string {
+	if strings.ToLower(lang) != "en" {
+		lang = "ru"
+	}
+	protectedMsg := "Защищён (DDoS Filter)"
+	if lang == "en" {
+		protectedMsg = "Protected (DDoS Filter)"
+	}
+
+	host = strings.TrimSpace(host)
 	if host == "" {
-		return "Защищён (DDoS Filter)"
+		return protectedMsg
 	}
 	if port <= 0 {
 		port = 31717
+	}
+	if timeout <= 0 {
+		timeout = 1500 * time.Millisecond
 	}
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return "Защищён (DDoS Filter)"
+	if err == nil {
+		_ = conn.Close()
+		elapsed := time.Since(start).Milliseconds()
+		if elapsed <= 0 {
+			elapsed = 1
+		}
+		return fmt.Sprintf("%d ms", elapsed)
 	}
-	_ = conn.Close()
 
-	elapsed := time.Since(start).Milliseconds()
-	return fmt.Sprintf("%d ms", elapsed)
+	// Attempt quick fallback ports in case gdaemon port is internal or behind firewall
+	fallbackPorts := []int{80, 443, 22, 27015, 25565, 8080}
+	quickTimeout := 350 * time.Millisecond
+	for _, fbPort := range fallbackPorts {
+		if fbPort == port {
+			continue
+		}
+		fbAddr := net.JoinHostPort(host, strconv.Itoa(fbPort))
+		fbStart := time.Now()
+		fbConn, fbErr := net.DialTimeout("tcp", fbAddr, quickTimeout)
+		if fbErr == nil {
+			_ = fbConn.Close()
+			elapsed := time.Since(fbStart).Milliseconds()
+			if elapsed <= 0 {
+				elapsed = 1
+			}
+			return fmt.Sprintf("%d ms", elapsed)
+		}
+	}
+
+	return protectedMsg
 }
 
 // EnrichNodeStatuses converts GameAP nodes or custom config nodes into rich Discord NodeStatuses.
-func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO, customNodes []config.NodeConfig) []NodeStatus {
+func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO, customNodes []config.NodeConfig, lang string) []NodeStatus {
 	var result []NodeStatus
+
+	if strings.ToLower(lang) != "en" {
+		lang = "ru"
+	}
 
 	if len(nodes) > 0 {
 		for _, n := range nodes {
@@ -150,19 +207,13 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 			// Count game servers running on this node
 			count := 0
 			for _, s := range servers {
-				if isServerOnNode(s, n) {
+				if isServerOnNode(s, n, len(nodes)) {
 					count++
 				}
 			}
 
 			cpuModel := n.CPUModel
-			if cpuModel == "" {
-				cpuModel = "AMD Ryzen / Intel Core"
-			}
 			protection := n.Protection
-			if protection == "" {
-				protection = "L4 Anti-DDoS Protection"
-			}
 
 			host := n.GDaemonHost
 			if host == "" && len(n.IPs) > 0 {
@@ -173,7 +224,7 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 				port = 31717
 			}
 
-			latency := ProbeNodeLatency(host, port, 1500*time.Millisecond)
+			latency := ProbeNodeLatency(host, port, 1500*time.Millisecond, lang)
 
 			result = append(result, NodeStatus{
 				ID:           n.ID,
@@ -182,8 +233,10 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 				CountryCode:  code,
 				Flag:         flag,
 				Provider:     n.Provider,
+				OS:           FormatOS(n.OS),
 				CPUModel:     cpuModel,
 				CPUPercent:   n.CPUPercent,
+				RAMPercent:   n.RAMPercent,
 				Protection:   protection,
 				Latency:      latency,
 				ServersCount: count,
@@ -209,20 +262,14 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 		}
 
 		cpuModel := cn.CPUModel
-		if cpuModel == "" {
-			cpuModel = "AMD Ryzen / Intel Core"
-		}
 		protection := cn.Protection
-		if protection == "" {
-			protection = "L4 Anti-DDoS Protection"
-		}
 
 		port := cn.Port
 		if port <= 0 {
 			port = 31717
 		}
 
-		latency := ProbeNodeLatency(cn.Host, port, 1500*time.Millisecond)
+		latency := ProbeNodeLatency(cn.Host, port, 1500*time.Millisecond, lang)
 
 		id := cn.ID
 		if id == 0 {
@@ -236,8 +283,10 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 			CountryCode:  code,
 			Flag:         flag,
 			Provider:     cn.Provider,
+			OS:           FormatOS(cn.OS),
 			CPUModel:     cpuModel,
 			CPUPercent:   cn.CPUPercent,
+			RAMPercent:   cn.RAMPercent,
 			Protection:   protection,
 			Latency:      latency,
 			ServersCount: count,
@@ -247,15 +296,68 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 		})
 	}
 
+	// Fallback: discover nodes from unique server addresses if both GameAP nodes and customNodes are empty
+	if len(result) == 0 && len(servers) > 0 {
+		type hostInfo struct{ count int }
+		hostMap := make(map[string]*hostInfo)
+		var order []string
+		for _, s := range servers {
+			addr := strings.TrimSpace(s.Address)
+			if addr == "" {
+				continue
+			}
+			if info, exists := hostMap[addr]; exists {
+				info.count++
+			} else {
+				hostMap[addr] = &hostInfo{count: 1}
+				order = append(order, addr)
+			}
+		}
+		for idx, addr := range order {
+			info := hostMap[addr]
+			nodeName := fmt.Sprintf("GameAP Dedicated Host [%s]", addr)
+			code, flag := DetectCountryAndFlag(nodeName, "")
+			latency := ProbeNodeLatency(addr, 31717, 1500*time.Millisecond, lang)
+			location := "Dedicated Server"
+			if lang == "ru" {
+				location = "Выделенный сервер"
+			}
+			result = append(result, NodeStatus{
+				ID:           uint64(idx + 1),
+				Name:         nodeName,
+				Location:     location,
+				CountryCode:  code,
+				Flag:         flag,
+				Provider:     "GameAP Host",
+				OS:           "",
+				CPUModel:     "",
+				CPUPercent:   0,
+				RAMPercent:   0,
+				Protection:   "",
+				Latency:      latency,
+				ServersCount: info.count,
+				IsOnline:     true,
+				Host:         addr,
+				Port:         31717,
+			})
+		}
+	}
+
 	return result
 }
 
-func isServerOnNode(s gameap.PublicServerDTO, n gameap.NodeDTO) bool {
+func isServerOnNode(s gameap.PublicServerDTO, n gameap.NodeDTO, totalNodes int) bool {
+	if s.NodeID > 0 && n.ID > 0 && s.NodeID == n.ID {
+		return true
+	}
+	if totalNodes == 1 {
+		return true
+	}
 	if s.Address == n.GDaemonHost && n.GDaemonHost != "" {
 		return true
 	}
 	for _, ip := range n.IPs {
-		if s.Address == ip {
+		if s.Address == ip && ip != "" {
 			return true
 		}
 	}

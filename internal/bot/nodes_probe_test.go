@@ -109,6 +109,29 @@ func TestDetectCountryAndFlag(t *testing.T) {
 	}
 }
 
+func TestFormatOS(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"windows", "🪟 Windows"},
+		{"Windows Server 2022", "🪟 Windows"},
+		{"linux", "🐧 Linux"},
+		{"Ubuntu 22.04", "🐧 Linux"},
+		{"FreeBSD", "🖥️ FreeBSD"},
+		{"", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := FormatOS(tc.input)
+			if got != tc.expected {
+				t.Errorf("FormatOS(%q) = %q; expected %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestProbeNodeLatency(t *testing.T) {
 	// 1. Successful local listener probe
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -125,19 +148,28 @@ func TestProbeNodeLatency(t *testing.T) {
 		}
 	}()
 
-	latency := ProbeNodeLatency("127.0.0.1", tcpAddr.Port, 1*time.Second)
+	latency := ProbeNodeLatency("127.0.0.1", tcpAddr.Port, 1*time.Second, "ru")
 	if latency == "" || latency == "Защищён (DDoS Filter)" {
 		t.Errorf("expected valid latency for local server, got %q", latency)
 	}
 
-	// 2. Unreachable / filtered port returns "Защищён (DDoS Filter)"
-	// On Windows, 127.0.0.1 on an unlistened port immediately refuses connection with error (RST)
-	// Or non-routable IP
-	latencyTimeout := ProbeNodeLatency("127.0.0.1", 59999, 100*time.Millisecond)
-	if latencyTimeout != "Защищён (DDoS Filter)" {
-		t.Errorf("expected DDoS Filter fallback on closed port, got %q", latencyTimeout)
+	// 2. Unreachable / filtered host returns "Защищён (DDoS Filter)" in Russian
+	latencyTimeoutRU := ProbeNodeLatency("nonexistent.node.invalid", 59999, 50*time.Millisecond, "ru")
+	if latencyTimeoutRU != "Защищён (DDoS Filter)" {
+		t.Errorf("expected DDoS Filter fallback on closed host (RU), got %q", latencyTimeoutRU)
 	}
 
+	// 3. Unreachable / filtered host returns "Protected (DDoS Filter)" in English
+	latencyTimeoutEN := ProbeNodeLatency("nonexistent.node.invalid", 59999, 50*time.Millisecond, "en")
+	if latencyTimeoutEN != "Protected (DDoS Filter)" {
+		t.Errorf("expected DDoS Filter fallback on closed host (EN), got %q", latencyTimeoutEN)
+	}
+
+	// 4. Empty host fallback
+	emptyHostLatency := ProbeNodeLatency("", 31717, 50*time.Millisecond, "ru")
+	if emptyHostLatency != "Защищён (DDoS Filter)" {
+		t.Errorf("expected DDoS Filter fallback on empty host, got %q", emptyHostLatency)
+	}
 }
 
 func TestEnrichNodeStatuses(t *testing.T) {
@@ -147,6 +179,8 @@ func TestEnrichNodeStatuses(t *testing.T) {
 			Name:        "[GE] Ryzen 9 7950X3D — Frankfurt",
 			Location:    "Germany, Frankfurt",
 			Provider:    "Datacenter AG",
+			OS:          "linux",
+			RAMPercent:  55,
 			IPs:         []string{"185.189.255.10"},
 			GDaemonHost: "185.189.255.10",
 			GDaemonPort: 31717,
@@ -176,18 +210,22 @@ func TestEnrichNodeStatuses(t *testing.T) {
 
 	customNodes := []config.NodeConfig{
 		{
-			Name:        "[RU] Core i9-14900K — Moscow",
-			Host:        "127.0.0.1",
-			Port:        31717,
-			CPUModel:    "Intel Core i9-14900K",
-			CPUPercent:  18,
-			Protection:  "StormWall L3/L4/L7",
+			Name:         "AMD Ryzen 7 7845HS Server",
+			Location:     "[RU] Moscow",
+			Provider:     "MTS",
+			OS:           "windows",
+			Host:         "127.0.0.1",
+			Port:         31717,
+			CPUModel:     "AMD Ryzen 7 7845HS",
+			CPUPercent:   14,
+			RAMPercent:   29,
+			Protection:   "L4 Anti-DDoS Protection",
 			ServersCount: 5,
 		},
 	}
 
 	// Case 1: GameAP provided nodes
-	statuses := EnrichNodeStatuses(gameapNodes, servers, nil)
+	statuses := EnrichNodeStatuses(gameapNodes, servers, nil, "ru")
 	if len(statuses) != 1 {
 		t.Fatalf("expected 1 status, got %d", len(statuses))
 	}
@@ -201,9 +239,15 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	if !s.IsOnline {
 		t.Errorf("expected node to be online")
 	}
+	if s.OS != "🐧 Linux" {
+		t.Errorf("expected formatted OS '🐧 Linux', got %q", s.OS)
+	}
+	if s.RAMPercent != 55 {
+		t.Errorf("expected RAMPercent 55, got %d", s.RAMPercent)
+	}
 
 	// Case 2: GameAP has no nodes, fallback to customNodes
-	statusesCustom := EnrichNodeStatuses(nil, nil, customNodes)
+	statusesCustom := EnrichNodeStatuses(nil, nil, customNodes, "ru")
 	if len(statusesCustom) != 1 {
 		t.Fatalf("expected 1 custom status, got %d", len(statusesCustom))
 	}
@@ -213,5 +257,27 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	}
 	if sc.ServersCount != 5 {
 		t.Errorf("expected 5 servers for custom node, got %d", sc.ServersCount)
+	}
+	if sc.OS != "🪟 Windows" {
+		t.Errorf("expected formatted OS '🪟 Windows', got %q", sc.OS)
+	}
+	if sc.RAMPercent != 29 {
+		t.Errorf("expected RAMPercent 29, got %d", sc.RAMPercent)
+	}
+	if sc.Provider != "MTS" {
+		t.Errorf("expected Provider 'MTS', got %q", sc.Provider)
+	}
+
+	// Case 3: Both nodes and customNodes are nil, fallback to server addresses
+	statusesServers := EnrichNodeStatuses(nil, servers, nil, "ru")
+	if len(statusesServers) != 1 {
+		t.Fatalf("expected 1 aggregated server status, got %d", len(statusesServers))
+	}
+	ss := statusesServers[0]
+	if ss.ServersCount != 2 {
+		t.Errorf("expected 2 servers on aggregated host, got %d", ss.ServersCount)
+	}
+	if ss.Host != "185.189.255.10" {
+		t.Errorf("expected host 185.189.255.10, got %s", ss.Host)
 	}
 }

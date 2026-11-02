@@ -2,10 +2,12 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,19 +22,23 @@ import (
 	"gameap-webmon-bot/internal/query"
 )
 
+// ErrGameAPDegraded indicates that the GameAP API is unreachable, but dashboard rendering succeeded via direct queries.
+var ErrGameAPDegraded = errors.New("gameap api unavailable, rendered from direct query cache")
+
 // Bot coordinates Discord gateway events, dashboard message updates, and alert monitoring.
 type Bot struct {
-	mu            sync.Mutex
-	cfg           *config.Config
-	session       *discordgo.Session
-	gameapClient  *gameap.Client
-	state         *State
-	alerts        *alerts.Tracker
-	cmdHandler    *CommandHandler
-	refreshChan   chan struct{}
-	pollErrCount  int
-	lastPollErr   string
-	queryFailures map[uint64]int
+	mu               sync.Mutex
+	cfg              *config.Config
+	session          *discordgo.Session
+	gameapClient     *gameap.Client
+	state            *State
+	alerts           *alerts.Tracker
+	cmdHandler       *CommandHandler
+	refreshChan      chan struct{}
+	pollErrCount     int
+	lastPollErr      string
+	queryFailures    map[uint64]int
+	lastKnownServers []gameap.PublicServerDTO
 }
 
 // NewBot constructs a configured Bot instance.
@@ -282,9 +288,6 @@ func (b *Bot) enrichServersWithHealthcheck(servers []gameap.PublicServerDTO, tim
 	var wg sync.WaitGroup
 	for i := range res {
 		srv := &res[i]
-		if strings.ToLower(srv.Status) != "online" {
-			continue
-		}
 
 		wg.Add(1)
 		go func(s *gameap.PublicServerDTO) {
@@ -296,6 +299,7 @@ func (b *Bot) enrichServersWithHealthcheck(servers []gameap.PublicServerDTO, tim
 
 			if err == nil && info != nil {
 				b.queryFailures[s.ID] = 0
+				s.Status = "online"
 				s.Players = info.Players
 				s.MaxPlayers = info.MaxPlayers
 				if info.Map != "" {
@@ -345,6 +349,38 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 		}
 	}
 
+	// Fallback to cached servers if GameAP is unreachable/500/timeout
+	if gameapErr != nil {
+		b.mu.Lock()
+		if len(b.lastKnownServers) > 0 {
+			servers = make([]gameap.PublicServerDTO, len(b.lastKnownServers))
+			copy(servers, b.lastKnownServers)
+			log.Printf("[WARN] GameAP API unreachable (%v), using %d cached servers for direct query healthcheck fallback", gameapErr, len(servers))
+		}
+		b.mu.Unlock()
+	} else if len(servers) > 0 {
+		b.mu.Lock()
+		// Merge returned servers into lastKnownServers to preserve any server that GameAP temporarily omits
+		serverMap := make(map[uint64]gameap.PublicServerDTO, len(b.lastKnownServers)+len(servers))
+		for _, s := range b.lastKnownServers {
+			serverMap[s.ID] = s
+		}
+		for _, s := range servers {
+			serverMap[s.ID] = s
+		}
+		merged := make([]gameap.PublicServerDTO, 0, len(serverMap))
+		for _, s := range serverMap {
+			merged = append(merged, s)
+		}
+		sort.Slice(merged, func(i, j int) bool {
+			return merged[i].ID < merged[j].ID
+		})
+		servers = merged
+		b.lastKnownServers = make([]gameap.PublicServerDTO, len(servers))
+		copy(b.lastKnownServers, servers)
+		b.mu.Unlock()
+	}
+
 	timeout := time.Duration(b.cfg.GameAP.DirectQueryTimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 3000 * time.Millisecond
@@ -352,7 +388,16 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 
 	if b.cfg.GameAP.DirectQueryEnabled && len(servers) > 0 {
 		servers = b.enrichServersWithHealthcheck(servers, timeout)
+		b.mu.Lock()
+		b.lastKnownServers = make([]gameap.PublicServerDTO, len(servers))
+		copy(b.lastKnownServers, servers)
+		b.mu.Unlock()
 	}
+
+	// Stable sort servers by ID so embed fields do not flicker
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].ID < servers[j].ID
+	})
 
 	// Merge with external custom servers
 	customDTOs := b.queryCustomServers(timeout)
@@ -366,7 +411,7 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 		if len(servers) == 0 {
 			return fmt.Errorf("GameAP API: %w", gameapErr)
 		}
-		log.Printf("[WARN] GameAP API unreachable (%v), continuing with %d custom servers in standalone mode", gameapErr, len(servers))
+		log.Printf("[WARN] GameAP API unreachable (%v), continuing with %d servers in degraded mode (direct healthcheck)", gameapErr, len(servers))
 	}
 
 	// Push enriched telemetry back to GameAP WebMonitoring plugin if available and healthy
@@ -384,11 +429,31 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 
 	// Update Dashboard in designated or dynamically bound channel
 	b.updateDashboard(servers, gameapAvailable)
+
+	if gameapErr != nil {
+		return fmt.Errorf("%w: %v", ErrGameAPDegraded, gameapErr)
+	}
 	return nil
 }
 
 func (b *Bot) pollServers(ctx context.Context) {
 	if err := b.RefreshDashboard(ctx); err != nil {
+		if errors.Is(err, ErrGameAPDegraded) {
+			b.mu.Lock()
+			b.pollErrCount++
+			count := b.pollErrCount
+			isFirst := b.lastPollErr == ""
+			b.lastPollErr = err.Error()
+			b.mu.Unlock()
+
+			if isFirst {
+				log.Printf("[WARN] %v (dashboard rendered from direct query cache)", err)
+			} else if count%10 == 0 {
+				log.Printf("[WARN] GameAP API is still degraded (%d consecutive attempts): %v", count, err)
+			}
+			return
+		}
+
 		b.mu.Lock()
 		b.pollErrCount++
 		count := b.pollErrCount
@@ -810,22 +875,27 @@ func (b *Bot) UpdateNodesStatus(ctx context.Context) error {
 		}
 	}
 
+	if len(servers) == 0 && len(b.lastKnownServers) > 0 {
+		servers = b.lastKnownServers
+	}
+
 	var configNodes []config.NodeConfig
 	var updateSec int
 	var onlineColor, offlineColor string
+	lang := "ru"
 	if b.cfg != nil {
 		configNodes = b.cfg.Nodes
 		updateSec = b.cfg.Discord.NodesUpdateIntervalSeconds
 		onlineColor = b.cfg.Bot.EmbedColorOnline
 		offlineColor = b.cfg.Bot.EmbedColorOffline
+		if strings.ToLower(strings.TrimSpace(b.cfg.Bot.Language)) == "en" {
+			lang = "en"
+		}
 	}
-	enriched := EnrichNodeStatuses(nodes, servers, configNodes)
-	if len(enriched) == 0 {
-		return nil
-	}
+	enriched := EnrichNodeStatuses(nodes, servers, configNodes, lang)
 
-	embed := RenderNodesStatusEmbed(enriched, updateSec, onlineColor, offlineColor)
-	components := BuildNodesStatusComponents()
+	embed := RenderNodesStatusEmbed(enriched, updateSec, onlineColor, offlineColor, lang)
+	components := BuildNodesStatusComponents(lang)
 
 	return b.syncNodesDiscordMessage(channelID, embed, components)
 }
