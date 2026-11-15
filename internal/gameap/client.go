@@ -256,8 +256,9 @@ func (c *Client) Ping(ctx context.Context) (time.Duration, error) {
 type ServerTelemetryDTO struct {
 	Online     bool   `json:"online"`
 	Map        string `json:"map,omitempty"`
-	Players    int    `json:"players,omitempty"`
+	Players    int    `json:"players"`
 	MaxPlayers int    `json:"max_players,omitempty"`
+	Ping       int    `json:"ping,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 }
 
@@ -287,6 +288,7 @@ func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) e
 			Map:        s.Map,
 			Players:    s.Players,
 			MaxPlayers: s.MaxPlayers,
+			Ping:       s.Ping,
 		}
 	}
 
