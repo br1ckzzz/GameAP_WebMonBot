@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release Binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run test suite
+        run: go test -v ./...
+
+      - name: Compile Cross-Platform Binaries
+        env:
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          TAG="${GITHUB_REF_NAME:-v1.0.0-rc1}"
+          VERSION="${TAG#v}"
+          echo "Building GameAP WebMonBot version: ${VERSION} (Tag: ${TAG})"
+
+          LDFLAGS="-s -w -X main.AppVersion=${VERSION}"
+
+          # 1. Windows amd64
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="${LDFLAGS}" -o dist/webmonbot-windows-amd64.exe ./cmd/bot
+          cp dist/webmonbot-windows-amd64.exe dist/webmonbot.exe
+
+          # 2. Linux amd64
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="${LDFLAGS}" -o dist/webmonbot-linux-amd64 ./cmd/bot
+          chmod +x dist/webmonbot-linux-amd64
+
+          # 3. Linux arm64
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="${LDFLAGS}" -o dist/webmonbot-linux-arm64 ./cmd/bot
+          chmod +x dist/webmonbot-linux-arm64
+
+          # 4. Create packaged archives (binary + config.example.json + docs)
+          mkdir -p dist/pkg-win-amd64
+          cp dist/webmonbot.exe dist/pkg-win-amd64/
+          cp config.example.json README.md SUPPORTED_GAMES.md dist/pkg-win-amd64/
+          (cd dist/pkg-win-amd64 && zip -r "../../dist/gameap-webmonbot-${TAG}-windows-amd64.zip" .)
+
+          mkdir -p dist/pkg-linux-amd64
+          cp dist/webmonbot-linux-amd64 dist/pkg-linux-amd64/
+          cp config.example.json README.md SUPPORTED_GAMES.md dist/pkg-linux-amd64/
+          tar -czf "dist/gameap-webmonbot-${TAG}-linux-amd64.tar.gz" -C dist/pkg-linux-amd64 .
+
+          mkdir -p dist/pkg-linux-arm64
+          cp dist/webmonbot-linux-arm64 dist/pkg-linux-arm64/
+          cp config.example.json README.md SUPPORTED_GAMES.md dist/pkg-linux-arm64/
+          tar -czf "dist/gameap-webmonbot-${TAG}-linux-arm64.tar.gz" -C dist/pkg-linux-arm64 .
+
+          rm -rf dist/pkg-win-amd64 dist/pkg-linux-amd64 dist/pkg-linux-arm64
+
+          # 5. Generate SHA-256 Checksums
+          cd dist
+          sha256sum webmonbot* gameap-webmonbot* > checksums.txt
+          echo "Generated Checksums:"
+          cat checksums.txt
+          cd ..
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        with:
+          files: |
+            dist/webmonbot.exe
+            dist/webmonbot-windows-amd64.exe
+            dist/webmonbot-linux-amd64
+            dist/webmonbot-linux-arm64
+            dist/gameap-webmonbot-*-windows-amd64.zip
+            dist/gameap-webmonbot-*-linux-amd64.tar.gz
+            dist/gameap-webmonbot-*-linux-arm64.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}

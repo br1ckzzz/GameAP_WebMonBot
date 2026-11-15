@@ -15,10 +15,9 @@ import (
 	"gameap-webmon-bot/internal/gameap"
 )
 
-const (
-	AppName    = "GameAP WebMonBot"
-	AppVersion = "1.0.0"
-)
+const AppName = "GameAP WebMonBot"
+
+var AppVersion = "1.0.0-rc1"
 
 func main() {
 	configPath := flag.String("config", "", "Path to configuration JSON file (defaults to config.json)")
