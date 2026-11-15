@@ -21,7 +21,7 @@
 ### ✨ Главные преимущества
 
 - 🪶 **Экстремальная легковесность:** Написан на чистом Go. Потребляет всего **~15 МБ RAM** и практически не нагружает процессор. Запускается на любом слабом VPS или на том же сервере, где крутится GameAP.
-- 🖥️ **Мониторинг хост-нод (`/mon nodes`) [NEW в v1.0.0]:** Отдельное интерактивное табло инфраструктуры выделенных серверов: модель CPU, загрузка процессора и RAM, операционная система, локация хостинга с флагом страны, статус Anti-DDoS защиты и **прямой замер сетевого пинга** до каждого хоста!
+- 🖥️ **Мониторинг хост-нод (`/mon nodes`) [NEW в v1.0.0]:** Отдельное интерактивное табло инфраструктуры хост-нод: статус доступности, операционная система, локация хостинга с флагом страны, IP-адрес, число активных серверов и **прямой замер сетевого пинга** до каждого хоста!
 - ⚡ **Мультипротокольный движок прямого опроса (Direct Query):** Встроенная поддержка опроса серверов напрямую по UDP/TCP:
   - **Valve A2S** (Counter-Strike 2, CS:GO, Rust, TF2, Left 4 Dead 2, Valheim, 7 Days to Die, ARK и сотни других);
   - **Minecraft Java** (Query & Server List Ping протокол);
@@ -37,7 +37,7 @@
   - Выделенный канал под конкретную игру (`/mon bind game:cs2`);
   - Выделенный канал под отдельный флагманский сервер (`/mon bind server:1`);
   - Форум-каналы Discord с авто-созданием тем под каждую игру (`/mon forum`);
-  - Выделенный канал для мониторинга оборудования нод (`/mon nodes`).
+  - Выделенный канал для мониторинга хост-нод и инфраструктуры (`/mon nodes`).
 - 🛡️ **100% Безопасность и совместимость с 2FA:** Работает по изолированному токену плагина `X-WebMon-Token`. Бот не имеет доступа к консоли, RCON или файлам сервера, не может остановить сервер и не требует логинов/паролей от панели.
 - 📚 **Каталог из 297 поддерживаемых игр:** Полный список кодов и игр доступен в файле [SUPPORTED_GAMES.md](SUPPORTED_GAMES.md).
 
@@ -150,7 +150,7 @@
    ```text
    /mon nodes
    ```
-   *Бот создаст отдельную карточку со списком ваших серверов-нод, их ОС, процессорами, памятью, локациями и пингом.*
+   *Бот создаст отдельную карточку со списком ваших серверов-нод, их статусом, операционной системой, локациями, IP-адресами, количеством серверов и сетевым пингом.*
 
 3. **Канал оповещений об авариях/падениях (Alerts):**
    Перейдите в канал оповещений (например, `#алерты`) и введите:
@@ -171,7 +171,7 @@
 | **`/mon bind`** | `[channel]` `[game]` `[server]` | Привязать мониторинг к каналу. Без параметров привязывает общее табло к текущему каналу. С `game:` транслирует только указанную игру, с `server:` — персональную карточку одного сервера. | `/mon bind`<br>`/mon bind channel:#серверы`<br>`/mon bind game:cs2 channel:#cs2`<br>`/mon bind server:1 channel:#mirage` |
 | **`/mon unbind`** | `[game]` `[server]` `[all]` | Отвязать мониторинг от канала. Можно отвязать определенную игру, конкретный сервер или снять вообще все привязки (`all:true`). | `/mon unbind`<br>`/mon unbind game:cs2`<br>`/mon unbind server:1`<br>`/mon unbind all:true` |
 | **`/mon bindings`** | *нет* | Показать список всех активных привязок каналов, игр и персональных серверов. | `/mon bindings` |
-| **`/mon nodes`** | `[channel]` `[unbind]` | Управление мониторингом хост-нод и инфраструктуры. Публикует и авто-обновляет сводку физических машин GameAP с пингом и железом. | `/mon nodes`<br>`/mon nodes channel:#железо`<br>`/mon nodes unbind:true` |
+| **`/mon nodes`** | `[channel]` `[unbind]` | Управление мониторингом хост-нод и инфраструктуры. Публикует и авто-обновляет сводку физических машин GameAP со статусом, локациями, ОС и сетевым пингом. | `/mon nodes`<br>`/mon nodes channel:#железо`<br>`/mon nodes unbind:true` |
 | **`/mon alerts`** | `[channel]` `[role]` `[enabled]` `[disable]` | Настройка мгновенных уведомлений об авариях серверов (падение, запуск, перезапуск, смена карты). Поддерживает упоминание роли. | `/mon alerts`<br>`/mon alerts channel:#аварии role:@Техподдержка`<br>`/mon alerts disable:true` |
 | **`/mon forum`** | `[channel]` `[unbind]` | Привязать мониторинг к Discord Forum Channel. Бот автоматически создаст отдельные темы по играм с живыми карточками. | `/mon forum channel:#игровые-серверы`<br>`/mon forum unbind:true` |
 | **`/mon add`** | `address:` `game:` `[name]` `[channel]` `[icon]` | **Добавить внешний сервер (Standalone)** в мониторинг без GameAP. Опрашивается напрямую по протоколам A2S/Minecraft/SAMP/FiveM. | `/mon add address:185.12.34.56:27015 game:cs2`<br>`/mon add address:mc.hypixel.net:25565 game:mc name:Hypixel`<br>`/mon add address:185.12.34.56:7777 game:samp channel:#samp` |
@@ -267,7 +267,7 @@ Built with clean Go, it requires no heavy runtime environments (zero Node.js, Py
 ### ✨ Key Features & Highlights
 
 - 🪶 **Ultra Lightweight & Fast:** Single statically-linked binary consuming only **~15 MB of RAM**. Minimal CPU usage, lightning-fast socket updates.
-- 🖥️ **Host Nodes & Dedicated Infrastructure Monitoring (`/mon nodes`) [NEW in v1.0.0]:** Dedicated dashboard for physical machines: CPU model, CPU/RAM utilization, Operating System, hosting location with national country flag, Anti-DDoS status, and **real-time network ping latency** to each individual host!
+- 🖥️ **Host Nodes & Dedicated Infrastructure Monitoring (`/mon nodes`) [NEW in v1.0.0]:** Dedicated dashboard for physical host machines: online availability status, Operating System, hosting location with national country flag, IP/host address, active game servers count, and **real-time network ping latency** to each individual host!
 - ⚡ **Multi-Protocol Direct Query Engine:** Instantaneous socket-level queries without external wrappers:
   - **Valve A2S** (CS2, Rust, TF2, L4D2, Valheim, 7D2D, ARK, and hundreds more);
   - **Minecraft Java** (Query & Server List Ping protocols);
@@ -283,7 +283,7 @@ Built with clean Go, it requires no heavy runtime environments (zero Node.js, Py
   - Per-game dedicated channels (`/mon bind game:cs2`);
   - Dedicated flagship single-server channels (`/mon bind server:1`);
   - Discord Forum Channels with automated per-game threads (`/mon forum`);
-  - Dedicated infrastructure hardware node status channel (`/mon nodes`).
+  - Dedicated host nodes and infrastructure status channel (`/mon nodes`).
 - 🛡️ **100% Secure & 2FA-Immune:** Authenticates strictly via isolated plugin `X-WebMon-Token`. The bot has no RCON, console, power, or filesystem permissions and requires zero panel administrator passwords.
 - 📚 **Comprehensive 297 Games Index:** Full list of games and short codes is available in [SUPPORTED_GAMES.md](SUPPORTED_GAMES.md).
 
@@ -388,7 +388,7 @@ Go to your Discord server and run:
    ```text
    /mon nodes
    ```
-   *The bot publishes a live hardware status card listing all host machines with CPU, RAM, OS, location flags, and network ping.*
+   *The bot publishes a live status card listing all host machines with status, OS, location flags, IP, active game servers count, and network ping.*
 
 3. **Downtime & Recovery Alerts:**
    Inside your alerts channel (e.g. `#alerts`), type:
@@ -407,7 +407,7 @@ All management commands are restricted to members with `Manage Server` permissio
 | **`/mon bind`** | `[channel]` `[game]` `[server]` | Bind dashboard to channel. Without arguments, binds general dashboard to current channel. Specify `game:` for dedicated game card or `server:` for single-server card. | `/mon bind`<br>`/mon bind channel:#servers`<br>`/mon bind game:rust channel:#rust`<br>`/mon bind server:1 channel:#mirage` |
 | **`/mon unbind`** | `[game]` `[server]` `[all]` | Unbind dashboard from channel, remove a game target, single server, or all bindings (`all:true`). | `/mon unbind`<br>`/mon unbind game:cs2`<br>`/mon unbind server:1`<br>`/mon unbind all:true` |
 | **`/mon bindings`** | *none* | Display all active channel, game, and server bindings. | `/mon bindings` |
-| **`/mon nodes`** | `[channel]` `[unbind]` | Manage physical host nodes and infrastructure monitoring. Publishes auto-refreshing hardware status card with ping and CPU/RAM metrics. | `/mon nodes`<br>`/mon nodes channel:#infrastructure`<br>`/mon nodes unbind:true` |
+| **`/mon nodes`** | `[channel]` `[unbind]` | Manage physical host nodes and infrastructure monitoring. Publishes auto-refreshing status card with location, OS, active servers count, and network ping. | `/mon nodes`<br>`/mon nodes channel:#infrastructure`<br>`/mon nodes unbind:true` |
 | **`/mon alerts`** | `[channel]` `[role]` `[enabled]` `[disable]` | Configure instant server alerts (down, up, restart, map change). Supports role mentions. | `/mon alerts`<br>`/mon alerts channel:#alerts role:@Admins`<br>`/mon alerts disable:true` |
 | **`/mon forum`** | `[channel]` `[unbind]` | Bind to a Discord Forum Channel. Automatically creates dedicated per-game threads with live cards. | `/mon forum channel:#game-threads`<br>`/mon forum unbind:true` |
 | **`/mon add`** | `address:` `game:` `[name]` `[channel]` `[icon]` | **Add a standalone external server** to monitor directly without GameAP via A2S/Minecraft/SAMP/FiveM protocols. | `/mon add address:185.12.34.56:27015 game:cs2`<br>`/mon add address:mc.hypixel.net:25565 game:mc name:Hypixel`<br>`/mon add address:185.12.34.56:7777 game:samp` |
