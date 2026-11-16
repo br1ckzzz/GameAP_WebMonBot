@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,5 +59,15 @@ func TestQuerySAMP(t *testing.T) {
 	}
 	if info.Map != "San Andreas" {
 		t.Errorf("expected map 'San Andreas', got '%s'", info.Map)
+	}
+}
+
+func TestQuerySAMP_IPv6JoinHostPort(t *testing.T) {
+	_, err := QuerySAMP("::1", 7777, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for IPv6 SAMP target")
+	}
+	if !strings.Contains(err.Error(), "[::1]:7777") {
+		t.Errorf("expected bracketed [::1]:7777 in error, got: %v", err)
 	}
 }

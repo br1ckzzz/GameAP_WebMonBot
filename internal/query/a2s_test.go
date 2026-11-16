@@ -3,6 +3,7 @@ package query
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
 	"testing"
 	"time"
 
@@ -149,6 +150,48 @@ func TestGetQueryPort(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("GetQueryPort(%q, %d) = %d, expected %d", tt.game, tt.port, got, tt.expected)
 		}
+	}
+}
+
+func TestQueryServer_IPv6JoinHostPort(t *testing.T) {
+	pc, err := net.ListenPacket("udp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 UDP loopback not available: %v", err)
+	}
+	defer pc.Close()
+
+	go func() {
+		buf := make([]byte, 2048)
+		_, remote, err := pc.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		var resp bytes.Buffer
+		resp.Write([]byte{0xFF, 0xFF, 0xFF, 0xFF})
+		resp.WriteByte(0x49)
+		resp.WriteByte(0x11)
+		resp.WriteString("IPv6 A2S Server\x00")
+		resp.WriteString("de_mirage\x00")
+		resp.WriteString("csgo\x00")
+		resp.WriteString("Counter-Strike 2\x00")
+		_ = binary.Write(&resp, binary.LittleEndian, uint16(730))
+		resp.WriteByte(3)
+		resp.WriteByte(10)
+		resp.WriteByte(0)
+		resp.WriteByte('d')
+		resp.WriteByte('l')
+		resp.WriteByte(0)
+		resp.WriteByte(1)
+		_, _ = pc.WriteTo(resp.Bytes(), remote)
+	}()
+
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	info, err := QueryServer("::1", port, 1*time.Second)
+	if err != nil {
+		t.Fatalf("QueryServer with IPv6 ::1 failed: %v", err)
+	}
+	if info.Name != "IPv6 A2S Server" {
+		t.Errorf("expected 'IPv6 A2S Server', got %q", info.Name)
 	}
 }
 

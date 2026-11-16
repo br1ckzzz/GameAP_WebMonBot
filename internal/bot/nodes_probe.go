@@ -1,11 +1,13 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gameap-webmon-bot/internal/config"
@@ -137,13 +139,20 @@ func FormatOS(osName string) string {
 // On success, it returns formatted ping in ms (e.g. "21 ms").
 // If the connection times out or fails (common with Anti-DDoS filtering),
 // it returns a localized protected filter indicator instead of marking the node offline.
-func ProbeNodeLatency(host string, port int, timeout time.Duration, lang string) string {
+func ProbeNodeLatency(ctx context.Context, host string, port int, timeout time.Duration, lang string) string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.ToLower(lang) != "en" {
 		lang = "ru"
 	}
 	protectedMsg := "Защищён (DDoS Filter)"
 	if lang == "en" {
 		protectedMsg = "Protected (DDoS Filter)"
+	}
+
+	if ctx.Err() != nil {
+		return protectedMsg
 	}
 
 	host = strings.TrimSpace(host)
@@ -159,7 +168,8 @@ func ProbeNodeLatency(host string, port int, timeout time.Duration, lang string)
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err == nil {
 		_ = conn.Close()
 		elapsed := time.Since(start).Milliseconds()
@@ -172,13 +182,17 @@ func ProbeNodeLatency(host string, port int, timeout time.Duration, lang string)
 	// Attempt quick fallback ports in case gdaemon port is internal or behind firewall
 	fallbackPorts := []int{80, 443, 22, 27015, 25565, 8080}
 	quickTimeout := 350 * time.Millisecond
+	quickDialer := net.Dialer{Timeout: quickTimeout}
 	for _, fbPort := range fallbackPorts {
+		if ctx.Err() != nil {
+			return protectedMsg
+		}
 		if fbPort == port {
 			continue
 		}
 		fbAddr := net.JoinHostPort(host, strconv.Itoa(fbPort))
 		fbStart := time.Now()
-		fbConn, fbErr := net.DialTimeout("tcp", fbAddr, quickTimeout)
+		fbConn, fbErr := quickDialer.DialContext(ctx, "tcp", fbAddr)
 		if fbErr == nil {
 			_ = fbConn.Close()
 			elapsed := time.Since(fbStart).Milliseconds()
@@ -192,112 +206,135 @@ func ProbeNodeLatency(host string, port int, timeout time.Duration, lang string)
 	return protectedMsg
 }
 
+const maxNodeProbeConcurrency = 8
+
 // EnrichNodeStatuses converts GameAP nodes or custom config nodes into rich Discord NodeStatuses.
-func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO, customNodes []config.NodeConfig, lang string) []NodeStatus {
-	var result []NodeStatus
+func EnrichNodeStatuses(ctx context.Context, nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO, customNodes []config.NodeConfig, lang string) []NodeStatus {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	if strings.ToLower(lang) != "en" {
 		lang = "ru"
 	}
 
+	sem := make(chan struct{}, maxNodeProbeConcurrency)
+
 	if len(nodes) > 0 {
-		for _, n := range nodes {
-			code, flag := DetectCountryAndFlag(n.Name, n.Location)
+		result := make([]NodeStatus, len(nodes))
+		var wg sync.WaitGroup
+		for i, n := range nodes {
+			wg.Add(1)
+			go func(idx int, node gameap.NodeDTO) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 
-			// Count game servers running on this node
-			count := 0
-			for _, s := range servers {
-				if isServerOnNode(s, n, len(nodes)) {
-					count++
+				code, flag := DetectCountryAndFlag(node.Name, node.Location)
+
+				// Count game servers running on this node
+				count := 0
+				for _, s := range servers {
+					if isServerOnNode(s, node, len(nodes)) {
+						count++
+					}
 				}
-			}
 
-			cpuModel := n.CPUModel
-			protection := n.Protection
+				host := node.GDaemonHost
+				if host == "" && len(node.IPs) > 0 {
+					host = node.IPs[0]
+				}
+				port := node.GDaemonPort
+				if port <= 0 {
+					port = 31717
+				}
 
-			host := n.GDaemonHost
-			if host == "" && len(n.IPs) > 0 {
-				host = n.IPs[0]
-			}
-			port := n.GDaemonPort
-			if port <= 0 {
-				port = 31717
-			}
+				latency := ProbeNodeLatency(ctx, host, port, 1500*time.Millisecond, lang)
 
-			latency := ProbeNodeLatency(host, port, 1500*time.Millisecond, lang)
-
-			result = append(result, NodeStatus{
-				ID:           n.ID,
-				Name:         n.Name,
-				Location:     n.Location,
-				CountryCode:  code,
-				Flag:         flag,
-				Provider:     n.Provider,
-				OS:           FormatOS(n.OS),
-				CPUModel:     cpuModel,
-				CPUPercent:   n.CPUPercent,
-				RAMPercent:   n.RAMPercent,
-				Protection:   protection,
-				Latency:      latency,
-				ServersCount: count,
-				IsOnline:     n.Enabled,
-				Host:         host,
-				Port:         port,
-			})
+				result[idx] = NodeStatus{
+					ID:           node.ID,
+					Name:         node.Name,
+					Location:     node.Location,
+					CountryCode:  code,
+					Flag:         flag,
+					Provider:     node.Provider,
+					OS:           FormatOS(node.OS),
+					CPUModel:     node.CPUModel,
+					CPUPercent:   node.CPUPercent,
+					RAMPercent:   node.RAMPercent,
+					Protection:   node.Protection,
+					Latency:      latency,
+					ServersCount: count,
+					IsOnline:     node.Enabled,
+					Host:         host,
+					Port:         port,
+				}
+			}(i, n)
 		}
+		wg.Wait()
 		return result
 	}
 
 	// Fallback to custom config nodes if GameAP returned no nodes
-	for i, cn := range customNodes {
-		code, flag := DetectCountryAndFlag(cn.Name, cn.Location)
+	if len(customNodes) > 0 {
+		result := make([]NodeStatus, len(customNodes))
+		var wg sync.WaitGroup
+		for i, cn := range customNodes {
+			wg.Add(1)
+			go func(idx int, cfgNode config.NodeConfig) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 
-		count := cn.ServersCount
-		if count == 0 && len(servers) > 0 {
-			for _, s := range servers {
-				if s.Address == cn.Host {
-					count++
+				code, flag := DetectCountryAndFlag(cfgNode.Name, cfgNode.Location)
+
+				count := cfgNode.ServersCount
+				if count == 0 && len(servers) > 0 {
+					for _, s := range servers {
+						if s.Address == cfgNode.Host {
+							count++
+						}
+					}
 				}
-			}
+
+				port := cfgNode.Port
+				if port <= 0 {
+					port = 31717
+				}
+
+				latency := ProbeNodeLatency(ctx, cfgNode.Host, port, 1500*time.Millisecond, lang)
+
+				id := cfgNode.ID
+				if id == 0 {
+					id = uint64(idx + 1)
+				}
+
+				result[idx] = NodeStatus{
+					ID:           id,
+					Name:         cfgNode.Name,
+					Location:     cfgNode.Location,
+					CountryCode:  code,
+					Flag:         flag,
+					Provider:     cfgNode.Provider,
+					OS:           FormatOS(cfgNode.OS),
+					CPUModel:     cfgNode.CPUModel,
+					CPUPercent:   cfgNode.CPUPercent,
+					RAMPercent:   cfgNode.RAMPercent,
+					Protection:   cfgNode.Protection,
+					Latency:      latency,
+					ServersCount: count,
+					IsOnline:     cfgNode.Enabled,
+					Host:         cfgNode.Host,
+					Port:         port,
+				}
+			}(i, cn)
 		}
-
-		cpuModel := cn.CPUModel
-		protection := cn.Protection
-
-		port := cn.Port
-		if port <= 0 {
-			port = 31717
-		}
-
-		latency := ProbeNodeLatency(cn.Host, port, 1500*time.Millisecond, lang)
-
-		id := cn.ID
-		if id == 0 {
-			id = uint64(i + 1)
-		}
-
-		result = append(result, NodeStatus{
-			ID:           id,
-			Name:         cn.Name,
-			Location:     cn.Location,
-			CountryCode:  code,
-			Flag:         flag,
-			Provider:     cn.Provider,
-			OS:           FormatOS(cn.OS),
-			CPUModel:     cpuModel,
-			CPUPercent:   cn.CPUPercent,
-			RAMPercent:   cn.RAMPercent,
-			Protection:   protection,
-			Latency:      latency,
-			ServersCount: count,
-			IsOnline:     cn.Enabled,
-			Host:         cn.Host,
-			Port:         port,
-		})
+		wg.Wait()
+		return result
 	}
 
 	// Fallback: discover nodes from unique server addresses if both GameAP nodes and customNodes are empty
-	if len(result) == 0 && len(servers) > 0 {
+	if len(servers) > 0 {
 		type hostInfo struct{ count int }
 		hostMap := make(map[string]*hostInfo)
 		var order []string
@@ -313,37 +350,48 @@ func EnrichNodeStatuses(nodes []gameap.NodeDTO, servers []gameap.PublicServerDTO
 				order = append(order, addr)
 			}
 		}
+
+		result := make([]NodeStatus, len(order))
+		var wg sync.WaitGroup
 		for idx, addr := range order {
-			info := hostMap[addr]
-			nodeName := fmt.Sprintf("GameAP Dedicated Host [%s]", addr)
-			code, flag := DetectCountryAndFlag(nodeName, "")
-			latency := ProbeNodeLatency(addr, 31717, 1500*time.Millisecond, lang)
-			location := "Dedicated Server"
-			if lang == "ru" {
-				location = "Выделенный сервер"
-			}
-			result = append(result, NodeStatus{
-				ID:           uint64(idx + 1),
-				Name:         nodeName,
-				Location:     location,
-				CountryCode:  code,
-				Flag:         flag,
-				Provider:     "GameAP Host",
-				OS:           "",
-				CPUModel:     "",
-				CPUPercent:   0,
-				RAMPercent:   0,
-				Protection:   "",
-				Latency:      latency,
-				ServersCount: info.count,
-				IsOnline:     true,
-				Host:         addr,
-				Port:         31717,
-			})
+			wg.Add(1)
+			go func(i int, hostAddr string, srvCount int) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				nodeName := fmt.Sprintf("GameAP Dedicated Host [%s]", hostAddr)
+				code, flag := DetectCountryAndFlag(nodeName, "")
+				latency := ProbeNodeLatency(ctx, hostAddr, 31717, 1500*time.Millisecond, lang)
+				location := "Dedicated Server"
+				if lang == "ru" {
+					location = "Выделенный сервер"
+				}
+				result[i] = NodeStatus{
+					ID:           uint64(i + 1),
+					Name:         nodeName,
+					Location:     location,
+					CountryCode:  code,
+					Flag:         flag,
+					Provider:     "GameAP Host",
+					OS:           "",
+					CPUModel:     "",
+					CPUPercent:   0,
+					RAMPercent:   0,
+					Protection:   "",
+					Latency:      latency,
+					ServersCount: srvCount,
+					IsOnline:     true,
+					Host:         hostAddr,
+					Port:         31717,
+				}
+			}(idx, addr, hostMap[addr].count)
 		}
+		wg.Wait()
+		return result
 	}
 
-	return result
+	return nil
 }
 
 func isServerOnNode(s gameap.PublicServerDTO, n gameap.NodeDTO, totalNodes int) bool {

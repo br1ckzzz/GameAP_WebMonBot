@@ -61,8 +61,12 @@ func main() {
 	// If check flag is provided, test connection to GameAP WebMonitoring
 	if *checkOnly {
 		log.Println("[CHECK] Testing connection to GameAP WebMonitoring...")
-		client := gameap.NewClient(cfg.GameAP.BaseURL, cfg.GameAP.APIToken, 10*time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		timeout := time.Duration(cfg.GameAP.TimeoutSeconds) * time.Second
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		client := gameap.NewClient(cfg.GameAP.BaseURL, cfg.GameAP.APIToken, timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		resp, err := client.FetchServers(ctx)
@@ -99,16 +103,19 @@ func main() {
 	// Handle graceful shutdown on SIGINT / SIGTERM
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
 	go func() {
 		<-sigChan
 		log.Println("\n[INFO] Shutdown signal received, closing sessions...")
 		cancel()
-		_ = b.Stop()
-		os.Exit(0)
 	}()
 
-	if err := b.Start(ctx); err != nil {
-		log.Fatalf("[FATAL] Bot error: %v", err)
+	startErr := b.Start(ctx)
+	if stopErr := b.Stop(); stopErr != nil {
+		log.Printf("[WARN] Error during bot shutdown: %v", stopErr)
+	}
+	if startErr != nil {
+		log.Fatalf("[FATAL] Bot error: %v", startErr)
 	}
 }

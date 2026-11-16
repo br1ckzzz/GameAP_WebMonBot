@@ -30,7 +30,7 @@ func QueryBedrock(address string, port int, timeout time.Duration) (*ServerInfo,
 		port = 19132 // Default Minecraft Bedrock port
 	}
 
-	target := fmt.Sprintf("%s:%d", address, port)
+	target := net.JoinHostPort(address, strconv.Itoa(port))
 	conn, err := net.DialTimeout("udp", target, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("dialing bedrock %s: %w", target, err)

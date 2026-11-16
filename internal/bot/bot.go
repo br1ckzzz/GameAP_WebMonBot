@@ -897,7 +897,7 @@ func (b *Bot) UpdateNodesStatus(ctx context.Context) error {
 			lang = "en"
 		}
 	}
-	enriched := EnrichNodeStatuses(nodes, servers, configNodes, lang)
+	enriched := EnrichNodeStatuses(ctx, nodes, servers, configNodes, lang)
 
 	embed := RenderNodesStatusEmbed(enriched, updateSec, onlineColor, offlineColor, lang)
 	components := BuildNodesStatusComponents(lang)

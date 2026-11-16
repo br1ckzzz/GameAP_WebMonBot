@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -36,8 +38,10 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 		Timeout: timeout,
 	}
 
+	hostPort := net.JoinHostPort(address, strconv.Itoa(port))
+
 	// 1. Try /dynamic.json first
-	dynamicURL := fmt.Sprintf("http://%s:%d/dynamic.json", address, port)
+	dynamicURL := fmt.Sprintf("http://%s/dynamic.json", hostPort)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, dynamicURL, nil)
 	if err == nil {
 		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.0")
@@ -70,7 +74,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	}
 
 	// 2. Fallback to /info.json and /players.json
-	infoURL := fmt.Sprintf("http://%s:%d/info.json", address, port)
+	infoURL := fmt.Sprintf("http://%s/info.json", hostPort)
 	reqInfo, err := http.NewRequestWithContext(context.Background(), http.MethodGet, infoURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request for %s: %w", infoURL, err)
@@ -92,7 +96,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	}
 
 	// Try getting players count from /players.json
-	playersURL := fmt.Sprintf("http://%s:%d/players.json", address, port)
+	playersURL := fmt.Sprintf("http://%s/players.json", hostPort)
 	reqPlayers, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, playersURL, nil)
 	playerCount := 0
 	if reqPlayers != nil {
@@ -114,7 +118,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	}
 	hostname := infoResp.Vars.SvHostname
 	if hostname == "" {
-		hostname = fmt.Sprintf("FiveM Server (%s:%d)", address, port)
+		hostname = fmt.Sprintf("FiveM Server (%s)", hostPort)
 	}
 
 	return &ServerInfo{

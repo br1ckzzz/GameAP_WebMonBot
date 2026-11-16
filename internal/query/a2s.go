@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -152,7 +153,7 @@ func QueryServer(address string, port int, timeout time.Duration) (*ServerInfo, 
 		return nil, errors.New("invalid address or port")
 	}
 
-	target := fmt.Sprintf("%s:%d", address, port)
+	target := net.JoinHostPort(address, strconv.Itoa(port))
 	conn, err := net.DialTimeout("udp", target, timeout)
 	if err != nil {
 		return nil, err

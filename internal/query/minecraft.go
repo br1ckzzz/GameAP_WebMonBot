@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,7 +70,7 @@ func QueryMinecraft(address string, port int, timeout time.Duration) (*ServerInf
 	if port <= 0 {
 		port = 25565
 	}
-	target := fmt.Sprintf("%s:%d", address, port)
+	target := net.JoinHostPort(address, strconv.Itoa(port))
 
 	var d net.Dialer
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

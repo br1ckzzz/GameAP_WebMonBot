@@ -258,3 +258,67 @@ func TestFormatConnectCustomID(t *testing.T) {
 		t.Errorf("GetCachedServerByAddr failed, got %v", byAddr)
 	}
 }
+
+func TestRenderGameGroupEmbed_NilConfig(t *testing.T) {
+	servers := []gameap.PublicServerDTO{
+		{
+			ID:         1,
+			Name:       "CS2 Public",
+			GameCode:   "cs2",
+			GameName:   "Counter-Strike 2",
+			Address:    "127.0.0.1",
+			Port:       27015,
+			Players:    10,
+			MaxPlayers: 32,
+			Status:     "online",
+		},
+	}
+
+	embed := RenderGameGroupEmbed("Counter-Strike 2", servers, nil, "")
+	if embed == nil {
+		t.Fatal("expected non-nil embed")
+	}
+	if embed.Color != 0x2ecc71 {
+		t.Errorf("expected default online color 0x2ecc71, got 0x%x", embed.Color)
+	}
+
+	servers[0].Status = "offline"
+	offlineEmbed := RenderGameGroupEmbed("Counter-Strike 2", servers, nil, "")
+	if offlineEmbed == nil {
+		t.Fatal("expected non-nil offline embed")
+	}
+	if offlineEmbed.Color != 0xe74c3c {
+		t.Errorf("expected default offline color 0xe74c3c, got 0x%x", offlineEmbed.Color)
+	}
+}
+
+func TestRenderSingleServerEmbed_NilConfig(t *testing.T) {
+	srv := gameap.PublicServerDTO{
+		ID:         1,
+		Name:       "Test Server",
+		GameCode:   "cs2",
+		GameName:   "Counter-Strike 2",
+		Address:    "127.0.0.1",
+		Port:       27015,
+		Players:    5,
+		MaxPlayers: 20,
+		Status:     "online",
+	}
+
+	embed := RenderSingleServerEmbed(srv, nil)
+	if embed == nil {
+		t.Fatal("expected non-nil embed")
+	}
+	if embed.Color != 0x2ecc71 {
+		t.Errorf("expected default online color 0x2ecc71, got 0x%x", embed.Color)
+	}
+
+	srv.Status = "offline"
+	offlineEmbed := RenderSingleServerEmbed(srv, nil)
+	if offlineEmbed == nil {
+		t.Fatal("expected non-nil offline embed")
+	}
+	if offlineEmbed.Color != 0xe74c3c {
+		t.Errorf("expected default offline color 0xe74c3c, got 0x%x", offlineEmbed.Color)
+	}
+}

@@ -84,9 +84,14 @@ func RenderGameGroupEmbed(gameName string, servers []gameap.PublicServerDTO, cfg
 		}
 	}
 
-	color := ParseHexColor(cfg.Bot.EmbedColorOnline, 0x2ecc71)
+	onlineColorHex, offlineColorHex := "", ""
+	if cfg != nil {
+		onlineColorHex = cfg.Bot.EmbedColorOnline
+		offlineColorHex = cfg.Bot.EmbedColorOffline
+	}
+	color := ParseHexColor(onlineColorHex, 0x2ecc71)
 	if onlineCount == 0 && len(servers) > 0 {
-		color = ParseHexColor(cfg.Bot.EmbedColorOffline, 0xe74c3c)
+		color = ParseHexColor(offlineColorHex, 0xe74c3c)
 	}
 
 	statusIcon := "🟢"
@@ -166,11 +171,16 @@ func RenderGameGroupEmbed(gameName string, servers []gameap.PublicServerDTO, cfg
 func RenderSingleServerEmbed(srv gameap.PublicServerDTO, cfg *config.Config) *discordgo.MessageEmbed {
 	isOnline := srv.Status == "online"
 
-	color := ParseHexColor(cfg.Bot.EmbedColorOnline, 0x2ecc71)
+	onlineColorHex, offlineColorHex := "", ""
+	if cfg != nil {
+		onlineColorHex = cfg.Bot.EmbedColorOnline
+		offlineColorHex = cfg.Bot.EmbedColorOffline
+	}
+	color := ParseHexColor(onlineColorHex, 0x2ecc71)
 	statusIcon := "🟢"
 	statusText := "В сети (Online)"
 	if !isOnline {
-		color = ParseHexColor(cfg.Bot.EmbedColorOffline, 0xe74c3c)
+		color = ParseHexColor(offlineColorHex, 0xe74c3c)
 		statusIcon = "🔴"
 		statusText = "Недоступен (Offline)"
 	}

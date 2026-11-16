@@ -52,3 +52,39 @@ func TestQueryBedrock(t *testing.T) {
 		t.Errorf("expected map 'Bedrock World', got '%s'", info.Map)
 	}
 }
+
+func TestQueryBedrock_IPv6JoinHostPort(t *testing.T) {
+	pc, err := net.ListenPacket("udp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 UDP loopback not available: %v", err)
+	}
+	defer pc.Close()
+
+	go func() {
+		buf := make([]byte, 1024)
+		n, clientAddr, err := pc.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n >= 33 && buf[0] == 0x01 {
+			var resp bytes.Buffer
+			resp.WriteByte(0x1C)
+			resp.Write(buf[1:9])
+			_ = binary.Write(&resp, binary.BigEndian, uint64(123456789))
+			resp.Write(raknetMagic)
+			payload := "MCPE;Bedrock IPv6;589;1.20.50;1;10;123456789;World;Survival;1;19132;19133"
+			_ = binary.Write(&resp, binary.BigEndian, uint16(len(payload)))
+			resp.WriteString(payload)
+			_, _ = pc.WriteTo(resp.Bytes(), clientAddr)
+		}
+	}()
+
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	info, err := QueryBedrock("::1", port, 1*time.Second)
+	if err != nil {
+		t.Fatalf("QueryBedrock with IPv6 ::1 failed: %v", err)
+	}
+	if info.Name != "Bedrock IPv6" {
+		t.Errorf("expected 'Bedrock IPv6', got %q", info.Name)
+	}
+}

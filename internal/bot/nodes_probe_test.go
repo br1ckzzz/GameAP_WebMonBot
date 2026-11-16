@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -148,25 +149,26 @@ func TestProbeNodeLatency(t *testing.T) {
 		}
 	}()
 
-	latency := ProbeNodeLatency("127.0.0.1", tcpAddr.Port, 1*time.Second, "ru")
+	ctx := context.Background()
+	latency := ProbeNodeLatency(ctx, "127.0.0.1", tcpAddr.Port, 1*time.Second, "ru")
 	if latency == "" || latency == "Защищён (DDoS Filter)" {
 		t.Errorf("expected valid latency for local server, got %q", latency)
 	}
 
 	// 2. Unreachable / filtered host returns "Защищён (DDoS Filter)" in Russian
-	latencyTimeoutRU := ProbeNodeLatency("nonexistent.node.invalid", 59999, 50*time.Millisecond, "ru")
+	latencyTimeoutRU := ProbeNodeLatency(ctx, "nonexistent.node.invalid", 59999, 50*time.Millisecond, "ru")
 	if latencyTimeoutRU != "Защищён (DDoS Filter)" {
 		t.Errorf("expected DDoS Filter fallback on closed host (RU), got %q", latencyTimeoutRU)
 	}
 
 	// 3. Unreachable / filtered host returns "Protected (DDoS Filter)" in English
-	latencyTimeoutEN := ProbeNodeLatency("nonexistent.node.invalid", 59999, 50*time.Millisecond, "en")
+	latencyTimeoutEN := ProbeNodeLatency(ctx, "nonexistent.node.invalid", 59999, 50*time.Millisecond, "en")
 	if latencyTimeoutEN != "Protected (DDoS Filter)" {
 		t.Errorf("expected DDoS Filter fallback on closed host (EN), got %q", latencyTimeoutEN)
 	}
 
 	// 4. Empty host fallback
-	emptyHostLatency := ProbeNodeLatency("", 31717, 50*time.Millisecond, "ru")
+	emptyHostLatency := ProbeNodeLatency(ctx, "", 31717, 50*time.Millisecond, "ru")
 	if emptyHostLatency != "Защищён (DDoS Filter)" {
 		t.Errorf("expected DDoS Filter fallback on empty host, got %q", emptyHostLatency)
 	}
@@ -225,7 +227,8 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	}
 
 	// Case 1: GameAP provided nodes
-	statuses := EnrichNodeStatuses(gameapNodes, servers, nil, "ru")
+	ctx := context.Background()
+	statuses := EnrichNodeStatuses(ctx, gameapNodes, servers, nil, "ru")
 	if len(statuses) != 1 {
 		t.Fatalf("expected 1 status, got %d", len(statuses))
 	}
@@ -247,7 +250,7 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	}
 
 	// Case 2: GameAP has no nodes, fallback to customNodes
-	statusesCustom := EnrichNodeStatuses(nil, nil, customNodes, "ru")
+	statusesCustom := EnrichNodeStatuses(ctx, nil, nil, customNodes, "ru")
 	if len(statusesCustom) != 1 {
 		t.Fatalf("expected 1 custom status, got %d", len(statusesCustom))
 	}
@@ -269,7 +272,7 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	}
 
 	// Case 3: Both nodes and customNodes are nil, fallback to server addresses
-	statusesServers := EnrichNodeStatuses(nil, servers, nil, "ru")
+	statusesServers := EnrichNodeStatuses(ctx, nil, servers, nil, "ru")
 	if len(statusesServers) != 1 {
 		t.Fatalf("expected 1 aggregated server status, got %d", len(statusesServers))
 	}
@@ -279,5 +282,75 @@ func TestEnrichNodeStatuses(t *testing.T) {
 	}
 	if ss.Host != "185.189.255.10" {
 		t.Errorf("expected host 185.189.255.10, got %s", ss.Host)
+	}
+}
+
+func TestEnrichNodeStatuses_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	nodes := []gameap.NodeDTO{
+		{ID: 1, Name: "Node 1", GDaemonHost: "192.0.2.1", GDaemonPort: 31717, Enabled: true},
+		{ID: 2, Name: "Node 2", GDaemonHost: "192.0.2.2", GDaemonPort: 31717, Enabled: true},
+	}
+
+	start := time.Now()
+	statuses := EnrichNodeStatuses(ctx, nodes, nil, nil, "en")
+	elapsed := time.Since(start)
+
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 statuses, got %d", len(statuses))
+	}
+	for i, s := range statuses {
+		if s.Latency != "Protected (DDoS Filter)" {
+			t.Errorf("node %d: expected 'Protected (DDoS Filter)' on cancelled ctx, got %q", i, s.Latency)
+		}
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("expected cancelled EnrichNodeStatuses to return quickly, took %v", elapsed)
+	}
+}
+
+func TestEnrichNodeStatuses_ConcurrentProbing(t *testing.T) {
+	// Start 4 local TCP listeners and probe them concurrently
+	const n = 4
+	nodes := make([]gameap.NodeDTO, 0, n)
+	for i := 0; i < n; i++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen %d: %v", i, err)
+		}
+		defer ln.Close()
+		go func(l net.Listener) {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				_ = c.Close()
+			}
+		}(ln)
+
+		port := ln.Addr().(*net.TCPAddr).Port
+		nodes = append(nodes, gameap.NodeDTO{
+			ID:          uint64(i + 1),
+			Name:        "Local Node",
+			GDaemonHost: "127.0.0.1",
+			GDaemonPort: port,
+			Enabled:     true,
+		})
+	}
+
+	statuses := EnrichNodeStatuses(context.Background(), nodes, nil, nil, "ru")
+	if len(statuses) != n {
+		t.Fatalf("expected %d statuses, got %d", n, len(statuses))
+	}
+	for i, s := range statuses {
+		if s.ID != uint64(i+1) {
+			t.Errorf("expected order preserved at index %d (ID %d), got ID %d", i, i+1, s.ID)
+		}
+		if s.Latency == "" || s.Latency == "Защищён (DDoS Filter)" {
+			t.Errorf("node %d: expected valid latency, got %q", i, s.Latency)
+		}
 	}
 }

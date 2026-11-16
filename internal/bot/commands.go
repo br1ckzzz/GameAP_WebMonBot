@@ -598,7 +598,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 
 	case "bindings":
 		generalCh := h.state.GetChannelID()
-		if generalCh == "" {
+		if generalCh == "" && h.cfg != nil {
 			generalCh = h.cfg.Discord.DashboardChannelID
 		}
 
@@ -612,7 +612,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 		for g, ch := range gameChannels {
 			gameLines = append(gameLines, fmt.Sprintf("• **%s** ➔ <#%s>", strings.ToUpper(g), ch))
 		}
-		if h.cfg.Discord.GameChannels != nil {
+		if h.cfg != nil && h.cfg.Discord.GameChannels != nil {
 			for g, ch := range h.cfg.Discord.GameChannels {
 				normKey := strings.ToLower(strings.TrimSpace(g))
 				normKey = strings.ReplaceAll(normKey, " ", "_")
@@ -1210,7 +1210,14 @@ func formatRoleMentions(roleStr string) string {
 func (h *CommandHandler) handleAlertsCommand(s *discordgo.Session, i *discordgo.InteractionCreate, opts []*discordgo.ApplicationCommandInteractionDataOption) {
 	if len(opts) == 0 {
 		// Display current alerts status
-		enabled, channelID, roleID := h.state.GetAlerts(h.cfg.Notifications.Enabled, h.cfg.Notifications.AlertsChannelID, h.cfg.Notifications.GetResolvedAlertRoles())
+		var cfgEnabled bool
+		var cfgChannelID, cfgRoleID string
+		if h.cfg != nil {
+			cfgEnabled = h.cfg.Notifications.Enabled
+			cfgChannelID = h.cfg.Notifications.AlertsChannelID
+			cfgRoleID = h.cfg.Notifications.GetResolvedAlertRoles()
+		}
+		enabled, channelID, roleID := h.state.GetAlerts(cfgEnabled, cfgChannelID, cfgRoleID)
 
 		statusText := "🟢 Включены"
 		if !enabled {
@@ -1321,7 +1328,14 @@ func (h *CommandHandler) handleAlertsCommand(s *discordgo.Session, i *discordgo.
 
 	_ = h.state.SetAlerts(enabledPtr, newChannel, roleToSet)
 
-	activeEnabled, activeChannel, activeRole := h.state.GetAlerts(h.cfg.Notifications.Enabled, h.cfg.Notifications.AlertsChannelID, h.cfg.Notifications.GetResolvedAlertRoles())
+	var cfgEnabled bool
+	var cfgChannelID, cfgRoleID string
+	if h.cfg != nil {
+		cfgEnabled = h.cfg.Notifications.Enabled
+		cfgChannelID = h.cfg.Notifications.AlertsChannelID
+		cfgRoleID = h.cfg.Notifications.GetResolvedAlertRoles()
+	}
+	activeEnabled, activeChannel, activeRole := h.state.GetAlerts(cfgEnabled, cfgChannelID, cfgRoleID)
 
 	h.mu.Lock()
 	if h.alertsTracker != nil {
@@ -1380,7 +1394,7 @@ func (h *CommandHandler) handleAlertsCommand(s *discordgo.Session, i *discordgo.
 func (h *CommandHandler) handleForumCommand(s *discordgo.Session, i *discordgo.InteractionCreate, opts []*discordgo.ApplicationCommandInteractionDataOption) {
 	if len(opts) == 0 {
 		forumCh := h.state.GetForumChannel()
-		if forumCh == "" {
+		if forumCh == "" && h.cfg != nil {
 			forumCh = h.cfg.Discord.ForumChannelID
 		}
 
@@ -2101,7 +2115,7 @@ func (h *CommandHandler) handleMonGroup(s *discordgo.Session, i *discordgo.Inter
 	defer cancel()
 
 	var allServers []gameap.PublicServerDTO
-	if h.gameapClient != nil && h.cfg.GameAP.BaseURL != "" {
+	if h.gameapClient != nil && h.cfg != nil && h.cfg.GameAP.BaseURL != "" {
 		resp, _ := h.gameapClient.FetchServers(ctx)
 		if resp != nil {
 			allServers = resp.Servers

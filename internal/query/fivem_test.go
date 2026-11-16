@@ -1,6 +1,7 @@
 package query
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -35,5 +36,32 @@ func TestQueryFiveM(t *testing.T) {
 	}
 	if info.Map != "San Andreas" {
 		t.Errorf("expected map 'San Andreas', got '%s'", info.Map)
+	}
+}
+
+func TestQueryFiveM_IPv6JoinHostPort(t *testing.T) {
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback not available: %v", err)
+	}
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dynamic.json" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"hostname":"Los Santos IPv6","mapname":"San Andreas","clients":12,"sv_maxclients":64,"gametype":"Roleplay"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	ts.Listener = ln
+	ts.Start()
+	defer ts.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	info, err := QueryFiveM("::1", port, 1*time.Second)
+	if err != nil {
+		t.Fatalf("QueryFiveM with IPv6 ::1 failed: %v", err)
+	}
+	if info.Name != "Los Santos IPv6" {
+		t.Errorf("expected name 'Los Santos IPv6', got %q", info.Name)
 	}
 }

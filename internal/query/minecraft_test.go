@@ -3,6 +3,7 @@ package query
 import (
 	"bytes"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,6 +81,16 @@ func TestQueryMinecraft_MockServer(t *testing.T) {
 	}
 	if info.Name != "CyberZone Minecraft Server" {
 		t.Errorf("expected name 'CyberZone Minecraft Server', got '%s'", info.Name)
+	}
+}
+
+func TestQueryMinecraft_IPv6JoinHostPort(t *testing.T) {
+	_, err := QueryMinecraft("2001:db8::1", 25565, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for unreachable documentation IPv6 address")
+	}
+	if !strings.Contains(err.Error(), "[2001:db8::1]:25565") {
+		t.Errorf("expected bracketed [2001:db8::1]:25565 in error, got: %v", err)
 	}
 }
 
