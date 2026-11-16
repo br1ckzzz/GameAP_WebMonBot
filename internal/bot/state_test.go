@@ -1,9 +1,12 @@
 package bot
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -343,4 +346,82 @@ func TestNodesStatePersistence(t *testing.T) {
 	if s2.GetNodesMessageID() != "" {
 		t.Errorf("expected empty message ID after clear, got %s", s2.GetNodesMessageID())
 	}
+}
+
+func TestLoadStateCorruptBackup(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "state.json")
+	corruptData := []byte(`{"channel_id": "123", INVALID_JSON`)
+
+	if err := os.WriteFile(stateFile, corruptData, 0644); err != nil {
+		t.Fatalf("failed to write corrupt state file: %v", err)
+	}
+
+	s := LoadState(stateFile)
+	if s == nil {
+		t.Fatalf("expected non-nil State")
+	}
+	if s.GameChannels == nil || s.ServerChannels == nil || s.CustomServers == nil || s.ForumThreadIDs == nil || s.MessageIDs == nil {
+		t.Fatalf("expected all state maps to be initialized")
+	}
+
+	corruptBackup := stateFile + ".corrupt"
+	backupData, err := os.ReadFile(corruptBackup)
+	if err != nil {
+		t.Fatalf("expected corrupt backup file at %s, got error: %v", corruptBackup, err)
+	}
+	if !bytes.Equal(backupData, corruptData) {
+		t.Errorf("corrupt backup mismatch: got %q, want %q", string(backupData), string(corruptData))
+	}
+
+	// Saving new state must not overwrite the .corrupt backup
+	if err := s.SetMessageID("summary", "msg_new"); err != nil {
+		t.Fatalf("SetMessageID failed: %v", err)
+	}
+	backupAfterSave, err := os.ReadFile(corruptBackup)
+	if err != nil || !bytes.Equal(backupAfterSave, corruptData) {
+		t.Errorf("expected .corrupt backup to remain intact after Save")
+	}
+}
+
+func TestSaveLockedAtomicOverwriteAndSetCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	stateFile := filepath.Join(tmpDir, "state.json")
+
+	s := LoadState(stateFile)
+	if err := s.SetCredentials("https://panel.example.com/api", "secret-token-1"); err != nil {
+		t.Fatalf("SetCredentials failed: %v", err)
+	}
+
+	// Overwrite existing file via SaveLocked (under lock)
+	s.mu.Lock()
+	s.BaseURL = "https://panel.example.com/api/v2"
+	s.APIToken = "secret-token-2"
+	err := s.SaveLocked()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatalf("SaveLocked overwrite failed: %v", err)
+	}
+
+	// Ensure no leftover .tmp file
+	if _, err := os.Stat(stateFile + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("expected no leftover .tmp file, got err=%v", err)
+	}
+
+	// Reload and verify persisted credentials
+	s2 := LoadState(stateFile)
+	if s2.BaseURL != "https://panel.example.com/api/v2" || s2.APIToken != "secret-token-2" {
+		t.Errorf("reloaded credentials mismatch: got (%q, %q)", s2.BaseURL, s2.APIToken)
+	}
+
+	// Concurrent SetCredentials calls should not race or corrupt state
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = s2.SetCredentials("https://panel.example.com/api/v3", "token-concurrent")
+		}()
+	}
+	wg.Wait()
 }

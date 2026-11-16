@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -689,6 +692,17 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 		})
 
 	case "setup":
+		if !h.isServerAdmin(i) {
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "❌ Только **Администраторы сервера** (права Администратор / Управление сервером) могут изменять подключение к GameAP.",
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
 		h.deferResponse(s, i)
 
 		apiURL := ""
@@ -697,18 +711,18 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 			for _, opt := range data.Options[0].Options {
 				if opt.Name == "url" {
 					if u, ok := opt.Value.(string); ok {
-						apiURL = u
+						apiURL = strings.TrimSpace(u)
 					}
 				} else if opt.Name == "token" {
 					if t, ok := opt.Value.(string); ok {
-						apiToken = t
+						apiToken = strings.TrimSpace(t)
 					}
 				}
 			}
 		}
 
-		if apiURL == "" {
-			h.editResponse(s, i, "❌ Не указан обязательный параметр `url`.")
+		if err := validateSetupURL(apiURL); err != nil {
+			h.editResponse(s, i, fmt.Sprintf("❌ Некорректный `url`: %s", err.Error()))
 			return
 		}
 
@@ -721,7 +735,8 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 
 		resp, err := h.gameapClient.FetchServers(ctx)
 		if err != nil {
-			h.editResponse(s, i, fmt.Sprintf("⚠️ Параметры сохранены, но тест связи не прошёл: `%s`\nПроверьте доступность URL и правильность токена.", err.Error()))
+			log.Printf("[WARN] /mon setup connection test failed: %v", err)
+			h.editResponse(s, i, fmt.Sprintf("⚠️ Параметры сохранены, но тест связи не прошёл: %s.\nПроверьте доступность URL и правильность токена.", sanitizeSetupError(err)))
 			return
 		}
 
@@ -1769,6 +1784,91 @@ func (h *CommandHandler) isAuthorized(i *discordgo.InteractionCreate) bool {
 	}
 
 	return false
+}
+
+var httpStatusRegexp = regexp.MustCompile(`HTTP (\d{3})`)
+
+// validateSetupURL validates that the GameAP setup URL uses http/https and does not target local/private/metadata addresses.
+func validateSetupURL(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return errors.New("не указан обязательный параметр url")
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return errors.New("неверный формат URL")
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return errors.New("поддерживаются только схемы http:// и https://")
+	}
+
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return errors.New("отсутствует хост в URL")
+	}
+
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") {
+		return errors.New("запрещено использовать localhost")
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if isDisallowedSetupIP(ip) {
+			return errors.New("запрещён доступ к локальным, приватным или служебным IP-адресам")
+		}
+		return nil
+	}
+
+	if ips, lookupErr := net.LookupIP(host); lookupErr == nil {
+		for _, ip := range ips {
+			if isDisallowedSetupIP(ip) {
+				return errors.New("домен разрешается в локальный, приватный или служебный IP-адрес")
+			}
+		}
+	}
+
+	return nil
+}
+
+func isDisallowedSetupIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		// Reject CGNAT 100.64.0.0/10
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeSetupError maps GameAP client errors to safe user-facing messages without leaking raw HTTP response bodies.
+func sanitizeSetupError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "превышен таймаут ожидания ответа"
+	}
+
+	errStr := err.Error()
+	if strings.Contains(errStr, "HTTP 401") {
+		return "ошибка авторизации (HTTP 401): неверный или отсутствующий токен"
+	}
+	if strings.Contains(errStr, "HTTP 403") {
+		return "доступ запрещён (HTTP 403): Bot API отключён или недостаточно прав"
+	}
+	if matches := httpStatusRegexp.FindStringSubmatch(errStr); len(matches) == 2 {
+		return fmt.Sprintf("сервер вернул ошибку (HTTP %s)", matches[1])
+	}
+	if strings.Contains(errStr, "unmarshaling") {
+		return "сервер вернул некорректный JSON-ответ"
+	}
+	return "не удалось подключиться к указанному адресу"
 }
 
 func (h *CommandHandler) handleMonRoles(s *discordgo.Session, i *discordgo.InteractionCreate, opts []*discordgo.ApplicationCommandInteractionDataOption) {

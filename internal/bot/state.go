@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -65,7 +66,15 @@ func LoadState(filePath string) *State {
 		return s
 	}
 
-	_ = json.Unmarshal(data, s)
+	if err := json.Unmarshal(data, s); err != nil {
+		log.Printf("[WARN] Failed to parse state file %s: %v", filePath, err)
+		corruptPath := filePath + ".corrupt"
+		if writeErr := os.WriteFile(corruptPath, data, 0644); writeErr != nil {
+			log.Printf("[WARN] Failed to back up corrupted state file to %s: %v", corruptPath, writeErr)
+		} else {
+			log.Printf("[WARN] Backed up corrupted state file to %s", corruptPath)
+		}
+	}
 	if s.GameChannels == nil {
 		s.GameChannels = make(map[string]string)
 	}
@@ -108,8 +117,6 @@ func (s *State) SaveLocked() error {
 		return err
 	}
 
-	// On Windows os.Rename can occasionally fail if destination file exists
-	_ = os.Remove(s.filePath)
 	return os.Rename(tmpFile, s.filePath)
 }
 
@@ -337,10 +344,10 @@ func (s *State) GetServerChannels() map[uint64]string {
 // SetCredentials stores the GameAP API endpoint and secret token in state.
 func (s *State) SetCredentials(baseURL, apiToken string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.BaseURL = baseURL
 	s.APIToken = apiToken
-	s.mu.Unlock()
-	return s.Save()
+	return s.SaveLocked()
 }
 
 // SetAlerts updates the alerts configuration in persistent state.

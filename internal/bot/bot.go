@@ -330,7 +330,7 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 	var servers []gameap.PublicServerDTO
 	var gameapErr error
 
-	if b.gameapClient != nil && b.cfg.GameAP.BaseURL != "" {
+	if b.gameapClient != nil && b.gameapClient.GetBaseURL() != "" {
 		resp, err := b.gameapClient.FetchServers(pollCtx)
 		if err != nil && pollCtx.Err() == nil {
 			// Transient DB lock / micro-glitch: wait 2 seconds and retry once
@@ -415,7 +415,7 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 	}
 
 	// Push enriched telemetry back to GameAP WebMonitoring plugin if available and healthy
-	if gameapAvailable && b.gameapClient != nil && b.cfg.GameAP.BaseURL != "" && len(servers) > 0 {
+	if gameapAvailable && b.gameapClient != nil && b.gameapClient.GetBaseURL() != "" && len(servers) > 0 {
 		_ = b.gameapClient.PushTelemetry(pollCtx, servers)
 	}
 
@@ -865,7 +865,7 @@ func (b *Bot) UpdateNodesStatus(ctx context.Context) error {
 	var nodes []gameap.NodeDTO
 	var servers []gameap.PublicServerDTO
 
-	if b.gameapClient != nil && b.cfg != nil && b.cfg.GameAP.BaseURL != "" {
+	if b.gameapClient != nil && b.gameapClient.GetBaseURL() != "" {
 		resp, err := b.gameapClient.FetchServers(pollCtx)
 		if err == nil && resp != nil {
 			nodes = resp.Nodes
