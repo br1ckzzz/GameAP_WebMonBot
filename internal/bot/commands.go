@@ -515,6 +515,8 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 			msgText = fmt.Sprintf("✅ Общее табло серверов успешно привязано к каналу <#%s>!\nТабло формируется и публикуется прямо сейчас...", targetChannelID)
 		}
 
+		h.deferResponse(s, i)
+
 		// Purge old bot messages from the target channel to prevent duplicates
 		if h.purgeFunc != nil {
 			_, _ = h.purgeFunc(targetChannelID)
@@ -524,13 +526,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 			msgText += "\n\n" + warning
 		}
 
-		_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: msgText,
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
+		h.editResponse(s, i, msgText)
 
 		// Trigger immediate refresh so the card appears right away without needing /mon refresh
 		h.mu.Lock()
@@ -789,6 +785,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 			})
 		}
 
+		embed.Fields = capEmbedFields(embed.Fields, 24, "серверов")
 		h.editResponseEmbed(s, i, embed)
 
 	case "refresh":
@@ -852,7 +849,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 		defer cancel()
 
 		var apiText string
-		if h.gameapClient != nil && h.cfg != nil && h.cfg.GameAP.BaseURL != "" {
+		if h.gameapClient != nil && h.gameapClient.GetBaseURL() != "" {
 			apiLatency, err := h.gameapClient.Ping(ctx)
 			apiText = fmt.Sprintf("%d ms", apiLatency.Milliseconds())
 			if err != nil {
@@ -1114,7 +1111,7 @@ func (h *CommandHandler) handleMessageComponent(s *discordgo.Session, i *discord
 		}
 
 		// 5. Fallback network poll if cache was somehow cold
-		if targetSrv == nil && serverID > 0 && h.gameapClient != nil && h.cfg != nil && h.cfg.GameAP.BaseURL != "" {
+		if targetSrv == nil && serverID > 0 && h.gameapClient != nil && h.gameapClient.GetBaseURL() != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			resp, _ := h.gameapClient.FetchServers(ctx)
@@ -1535,10 +1532,23 @@ func (h *CommandHandler) handleMonAdd(s *discordgo.Session, i *discordgo.Interac
 		h.editResponse(s, i, fmt.Sprintf("❌ Неверный формат адреса `%s`. Ожидается `IP:PORT` (например `127.0.0.1:7777` или `mc.example.com:25565`).", addressStr))
 		return
 	}
+	host = strings.ToLower(strings.TrimSpace(host))
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 || port > 65535 {
 		h.editResponse(s, i, fmt.Sprintf("❌ Неверный номер порта `%s`. Допустимый диапазон: 1–65535.", portStr))
 		return
+	}
+
+	if customIcon != "" {
+		parsedIcon, iconErr := url.ParseRequestURI(customIcon)
+		scheme := ""
+		if parsedIcon != nil {
+			scheme = strings.ToLower(parsedIcon.Scheme)
+		}
+		if iconErr != nil || (scheme != "http" && scheme != "https") || parsedIcon.Host == "" {
+			h.editResponse(s, i, "❌ Некорректный URL иконки (`icon`). Используйте ссылку с протоколом `http://` или `https://`.")
+			return
+		}
 	}
 
 	timeout := 2500 * time.Millisecond
@@ -1714,14 +1724,19 @@ func (h *CommandHandler) handleMonList(s *discordgo.Session, i *discordgo.Intera
 
 	var sb strings.Builder
 	for idx, srv := range servers {
-		sb.WriteString(fmt.Sprintf("**%d. %s** (ID: `%d`)\n", idx+1, srv.Name, srv.ID))
-		sb.WriteString(fmt.Sprintf("   • Адрес: `%s:%d`\n", srv.Address, srv.Port))
-		sb.WriteString(fmt.Sprintf("   • Игра: `%s` (`%s`)\n\n", srv.GameName, srv.GameCode))
+		entry := fmt.Sprintf("**%d. %s** (ID: `%d`)\n   • Адрес: `%s:%d`\n   • Игра: `%s` (`%s`)\n\n",
+			idx+1, srv.Name, srv.ID, srv.Address, srv.Port, srv.GameName, srv.GameCode)
+		if sb.Len()+len(entry) > 3950 {
+			sb.WriteString(fmt.Sprintf("...и ещё %d серверов", len(servers)-idx))
+			break
+		}
+		sb.WriteString(entry)
 	}
 
+	desc := truncateEmbedDescription(sb.String(), 4000, "\n...")
 	embed := &discordgo.MessageEmbed{
 		Title:       fmt.Sprintf("📋 Список внешних серверов (%d)", len(servers)),
-		Description: sb.String(),
+		Description: desc,
 		Color:       0x5865F2,
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: "Удалить сервер: /mon remove address:<ip:port>",
@@ -1967,13 +1982,13 @@ func (h *CommandHandler) handleMonRoles(s *discordgo.Session, i *discordgo.Inter
 
 	if len(allRolesMap) == 0 {
 		sb.WriteString("• **Назначенные роли менеджеров:** *(пока не назначены)*\n\n")
-		sb.WriteString("💡 *Чтобы выдать доступ модераторам или конкретной роли:* `/mon roles add role:@Роль`")
+		sb.WriteString("💡 *Чтобы выдать доступ модераторам или конкретной роли:* `/mon roles add:@Роль`")
 	} else {
 		sb.WriteString("• **Назначенные роли менеджеров:**\n")
 		for r := range allRolesMap {
 			sb.WriteString(fmt.Sprintf("  - <@&%s> (`%s`)\n", r, r))
 		}
-		sb.WriteString("\n*Удалить роль:* `/mon roles remove role:@Роль`")
+		sb.WriteString("\n*Удалить роль:* `/mon roles remove:@Роль`")
 	}
 
 	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -2115,7 +2130,7 @@ func (h *CommandHandler) handleMonGroup(s *discordgo.Session, i *discordgo.Inter
 	defer cancel()
 
 	var allServers []gameap.PublicServerDTO
-	if h.gameapClient != nil && h.cfg != nil && h.cfg.GameAP.BaseURL != "" {
+	if h.gameapClient != nil && h.gameapClient.GetBaseURL() != "" {
 		resp, _ := h.gameapClient.FetchServers(ctx)
 		if resp != nil {
 			allServers = resp.Servers

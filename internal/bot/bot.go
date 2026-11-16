@@ -148,18 +148,13 @@ func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
 		return
 	}
 
-	// Otherwise (multi-server mode), register for every connected guild and globally
-	for _, g := range r.Guilds {
-		for _, cmd := range commands {
-			_, err := s.ApplicationCommandCreate(appID, g.ID, cmd)
-			if err == nil {
-				log.Printf("[INFO] Registered slash command /%s in guild %s", cmd.Name, g.ID)
-			}
-		}
-	}
-
+	// Otherwise (multi-server mode), register globally only to avoid duplicate slash commands
 	for _, cmd := range commands {
-		_, _ = s.ApplicationCommandCreate(appID, "", cmd)
+		if _, err := s.ApplicationCommandCreate(appID, "", cmd); err != nil {
+			log.Printf("[WARN] Failed to register global slash command /%s: %v", cmd.Name, err)
+		} else {
+			log.Printf("[INFO] Registered global slash command /%s", cmd.Name)
+		}
 	}
 }
 
@@ -220,11 +215,14 @@ func (b *Bot) queryCustomServers(timeout time.Duration) []gameap.PublicServerDTO
 
 	results := make([]gameap.PublicServerDTO, len(customServers))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
 
 	for i, cs := range customServers {
 		wg.Add(1)
 		go func(idx int, srv CustomServer) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
 			info, err := query.QueryServerAuto(srv.GameCode, srv.Address, srv.Port, timeout)
 			status := "offline"
@@ -286,12 +284,15 @@ func (b *Bot) enrichServersWithHealthcheck(servers []gameap.PublicServerDTO, tim
 	copy(res, servers)
 
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
 	for i := range res {
 		srv := &res[i]
 
 		wg.Add(1)
 		go func(s *gameap.PublicServerDTO) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
 			info, err := query.QueryServerAuto(s.GameCode, s.Address, s.Port, timeout)
 			b.mu.Lock()
@@ -651,7 +652,7 @@ func (b *Bot) cleanupStaleMessages(activeKeys map[string]bool, generalChannel st
 	tracked := b.state.GetAllMessageIDs()
 
 	for key, msgID := range tracked {
-		if activeKeys[key] {
+		if activeKeys[key] || strings.HasPrefix(key, "game_group_") {
 			continue
 		}
 
@@ -714,11 +715,6 @@ func (b *Bot) syncDiscordMessage(channelID, key string, embed *discordgo.Message
 		_ = b.state.RemoveMessageID(key)
 	}
 
-	// Before creating a new message, ensure any old message ID for this key is deleted
-	if msgID != "" {
-		_ = b.session.ChannelMessageDelete(channelID, msgID)
-	}
-
 	// Send new message
 	send := &discordgo.MessageSend{
 		Embeds:     []*discordgo.MessageEmbed{embed},
@@ -751,19 +747,18 @@ func (b *Bot) syncForumPost(forumChannelID string, gameName string, embed *disco
 			return // Successfully updated existing forum post!
 		}
 
-		// Check if thread was archived: unarchive and retry
-		unarchived := false
-		if _, unarchErr := b.session.ChannelEditComplex(threadID, &discordgo.ChannelEdit{Archived: &unarchived}); unarchErr == nil {
-			if _, retryErr := b.session.ChannelMessageEditComplex(edit); retryErr == nil {
-				return
-			}
-		}
-
 		// If thread/message was deleted (404 or 10008), reset thread ID to re-create
 		if isMessageDeletedError(err) {
 			log.Printf("[INFO] Forum thread for %s (%s) was deleted. Re-creating post...", gameName, threadID)
 			_ = b.state.RemoveForumThread(gameName)
 		} else {
+			// Check if thread was archived: unarchive and retry
+			unarchived := false
+			if _, unarchErr := b.session.ChannelEditComplex(threadID, &discordgo.ChannelEdit{Archived: &unarchived}); unarchErr == nil {
+				if _, retryErr := b.session.ChannelMessageEditComplex(edit); retryErr == nil {
+					return
+				}
+			}
 			// Transient network or rate limit error: log warning and retry on next tick
 			log.Printf("[WARN] Failed to edit forum post for %s in thread %s: %v", gameName, threadID, err)
 			return
@@ -950,7 +945,6 @@ func (b *Bot) syncNodesDiscordMessage(channelID string, embed *discordgo.Message
 
 	if b.state != nil {
 		_ = b.state.SetNodesMessageID(msg.ID)
-		_ = b.state.Save()
 	}
 	return nil
 }

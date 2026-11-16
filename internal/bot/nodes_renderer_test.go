@@ -264,3 +264,39 @@ func TestBuildNodesStatusComponents(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderNodesStatusEmbed_FieldCap(t *testing.T) {
+	var nodes []NodeStatus
+	for i := 1; i <= 30; i++ {
+		nodes = append(nodes, NodeStatus{
+			ID:       uint64(i),
+			Name:     "Node",
+			IsOnline: true,
+			Latency:  "10 ms",
+		})
+	}
+
+	embed := RenderNodesStatusEmbed(nodes, 300, "#2ecc71", "#e74c3c", "ru")
+	if len(embed.Fields) > 25 {
+		t.Fatalf("expected at most 25 fields, got %d", len(embed.Fields))
+	}
+	if len(embed.Fields) != 25 {
+		t.Fatalf("expected 25 fields (23 nodes + 1 overflow + 1 summary), got %d", len(embed.Fields))
+	}
+	overflow := embed.Fields[23]
+	if !strings.Contains(overflow.Name, "и ещё 7") && !strings.Contains(overflow.Value, "и ещё 7") {
+		t.Errorf("expected overflow indicator for 7 nodes, got name=%q value=%q", overflow.Name, overflow.Value)
+	}
+	summary := embed.Fields[24]
+	if !strings.Contains(summary.Name, "Инфраструктура") {
+		t.Errorf("expected summary field last, got %q", summary.Name)
+	}
+
+	embedEn := RenderNodesStatusEmbed(nodes, 300, "#2ecc71", "#e74c3c", "en")
+	if len(embedEn.Fields) != 25 {
+		t.Fatalf("expected 25 fields for EN, got %d", len(embedEn.Fields))
+	}
+	if !strings.Contains(embedEn.Fields[23].Name, "and 7 more") && !strings.Contains(embedEn.Fields[23].Value, "and 7 more") {
+		t.Errorf("expected EN overflow indicator for 7 nodes, got name=%q value=%q", embedEn.Fields[23].Name, embedEn.Fields[23].Value)
+	}
+}

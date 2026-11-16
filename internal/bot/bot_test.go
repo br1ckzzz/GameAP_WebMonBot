@@ -54,3 +54,24 @@ func TestUpdateNodesStatus_NoChannel(t *testing.T) {
 		t.Fatalf("expected nil error when channel not configured, got: %v", err)
 	}
 }
+
+func TestCleanupStaleMessages_PreservesGameGroup(t *testing.T) {
+	tmpDir := t.TempDir()
+	st := LoadState(tmpDir + "/state.json")
+	_ = st.SetMessageID("game_group_cs2_123456", "msg_group_1")
+	_ = st.SetMessageID("game_stale_no_msg", "")
+
+	b := &Bot{
+		cfg:   &config.Config{},
+		state: st,
+	}
+
+	b.cleanupStaleMessages(map[string]bool{}, "", true)
+
+	if got := st.GetMessageID("game_group_cs2_123456"); got != "msg_group_1" {
+		t.Errorf("expected game_group_ key to be preserved, got %q", got)
+	}
+	if _, exists := st.GetAllMessageIDs()["game_stale_no_msg"]; exists {
+		t.Errorf("expected stale non-game_group_ key to be removed")
+	}
+}

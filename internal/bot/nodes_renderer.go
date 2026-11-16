@@ -193,6 +193,24 @@ func RenderNodesStatusEmbed(nodes []NodeStatus, updateIntervalSeconds int, onlin
 		footerText = fmt.Sprintf("GameAP Monitoring • Синхронизировано • Обновляется раз в %d мин", intervalMins)
 	}
 
+	if len(fields) > 24 {
+		remaining := len(fields) - 23
+		fields = fields[:23]
+		var overflowName, overflowValue string
+		if isEn {
+			overflowName = fmt.Sprintf("...and %d more nodes", remaining)
+			overflowValue = "List truncated due to Discord's 25-field embed limit."
+		} else {
+			overflowName = fmt.Sprintf("...и ещё %d нод", remaining)
+			overflowValue = "Список сокращён из-за лимита Discord (25 полей)."
+		}
+		fields = append(fields, &discordgo.MessageEmbedField{
+			Name:   overflowName,
+			Value:  overflowValue,
+			Inline: false,
+		})
+	}
+
 	fields = append(fields, &discordgo.MessageEmbedField{
 		Name:   summaryName,
 		Value:  summaryValue,

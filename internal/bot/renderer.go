@@ -5,12 +5,47 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 
 	"gameap-webmon-bot/internal/config"
 	"gameap-webmon-bot/internal/gameap"
 )
+
+// capEmbedFields limits embed fields to maxKeep items and appends an overflow indicator if truncated.
+func capEmbedFields(fields []*discordgo.MessageEmbedField, maxKeep int, label string) []*discordgo.MessageEmbedField {
+	if maxKeep <= 0 || len(fields) <= maxKeep {
+		return fields
+	}
+	remaining := len(fields) - maxKeep
+	capped := make([]*discordgo.MessageEmbedField, maxKeep, maxKeep+1)
+	copy(capped, fields[:maxKeep])
+	capped = append(capped, &discordgo.MessageEmbedField{
+		Name:   fmt.Sprintf("...и ещё %d %s", remaining, label),
+		Value:  "Список сокращён из-за лимита Discord (25 полей).",
+		Inline: false,
+	})
+	return capped
+}
+
+// truncateEmbedDescription caps an embed description to maxLen bytes, appending suffix when truncated.
+func truncateEmbedDescription(desc string, maxLen int, suffix string) string {
+	if len(desc) <= maxLen {
+		return desc
+	}
+	limit := maxLen - len(suffix)
+	if limit < 0 {
+		limit = 0
+	}
+	for limit > 0 && !utf8.ValidString(desc[:limit]) {
+		limit--
+	}
+	if idx := strings.LastIndex(desc[:limit], "\n"); idx > 0 {
+		limit = idx
+	}
+	return desc[:limit] + suffix
+}
 
 // ParseHexColor converts "#2ecc71" or "2ecc71" to integer for Discord embed.
 func ParseHexColor(hexStr string, fallback int) int {
@@ -164,6 +199,7 @@ func RenderGameGroupEmbed(gameName string, servers []gameap.PublicServerDTO, cfg
 		})
 	}
 
+	embed.Fields = capEmbedFields(embed.Fields, 24, "серверов")
 	return embed
 }
 

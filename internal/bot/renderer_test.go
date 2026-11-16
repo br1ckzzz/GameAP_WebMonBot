@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bwmarrin/discordgo"
+
 	"gameap-webmon-bot/internal/config"
 	"gameap-webmon-bot/internal/gameap"
 )
@@ -320,5 +322,57 @@ func TestRenderSingleServerEmbed_NilConfig(t *testing.T) {
 	}
 	if offlineEmbed.Color != 0xe74c3c {
 		t.Errorf("expected default offline color 0xe74c3c, got 0x%x", offlineEmbed.Color)
+	}
+}
+
+func TestRenderGameGroupEmbed_FieldCap(t *testing.T) {
+	var servers []gameap.PublicServerDTO
+	for i := 1; i <= 30; i++ {
+		servers = append(servers, gameap.PublicServerDTO{
+			ID:         uint64(i),
+			Name:       "Server",
+			GameCode:   "cs2",
+			GameName:   "Counter-Strike 2",
+			Address:    "127.0.0.1",
+			Port:       27015 + i,
+			Status:     "online",
+			Players:    1,
+			MaxPlayers: 10,
+		})
+	}
+
+	embed := RenderGameGroupEmbed("Counter-Strike 2", servers, nil, "")
+	if len(embed.Fields) > 25 {
+		t.Fatalf("expected at most 25 fields, got %d", len(embed.Fields))
+	}
+	if len(embed.Fields) != 25 {
+		t.Fatalf("expected 25 fields (24 servers + 1 overflow), got %d", len(embed.Fields))
+	}
+	last := embed.Fields[len(embed.Fields)-1]
+	if !strings.Contains(last.Name, "и ещё 6") && !strings.Contains(last.Value, "и ещё 6") {
+		t.Errorf("expected overflow indicator for 6 remaining servers, got name=%q value=%q", last.Name, last.Value)
+	}
+}
+
+func TestCapEmbedFieldsAndDescription(t *testing.T) {
+	var fields []*discordgo.MessageEmbedField
+	for i := 0; i < 30; i++ {
+		fields = append(fields, &discordgo.MessageEmbedField{Name: "F", Value: "V"})
+	}
+	capped := capEmbedFields(fields, 24, "серверов")
+	if len(capped) != 25 {
+		t.Fatalf("expected 25 capped fields, got %d", len(capped))
+	}
+	if !strings.Contains(capped[24].Name, "и ещё 6") {
+		t.Errorf("expected overflow field for 6 items, got %q", capped[24].Name)
+	}
+
+	longDesc := strings.Repeat("a\n", 2500) // 5000 chars
+	trunc := truncateEmbedDescription(longDesc, 4000, "\n...и ещё 5")
+	if len(trunc) > 4000 {
+		t.Errorf("expected truncated description <= 4000 chars, got %d", len(trunc))
+	}
+	if !strings.Contains(trunc, "...и ещё 5") {
+		t.Errorf("expected overflow indicator in truncated description")
 	}
 }

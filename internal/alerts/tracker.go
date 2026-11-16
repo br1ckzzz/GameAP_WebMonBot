@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +51,7 @@ func NewTracker(cfg *config.Config, session *discordgo.Session) *Tracker {
 		isFirstCheck:    true,
 		enabled:         cfg.Notifications.Enabled,
 		alertsChannelID: cfg.Notifications.AlertsChannelID,
-		alertRoleID:     cfg.Notifications.AlertRoleID,
+		alertRoleID:     cfg.Notifications.GetResolvedAlertRoles(),
 	}
 }
 
@@ -202,7 +203,7 @@ func (t *Tracker) sendOfflineAlert(state ServerState, channelID, roleID string) 
 			},
 			{
 				Name:   "🕒 Время фиксации",
-				Value:  time.Now().Format("15:04:05 MSK"),
+				Value:  fmt.Sprintf("<t:%d:T>", time.Now().Unix()),
 				Inline: true,
 			},
 			{
@@ -233,10 +234,12 @@ func (t *Tracker) sendOfflineAlert(state ServerState, channelID, roleID string) 
 		}
 	}
 
-	_, _ = t.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+	if _, err := t.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: content,
 		Embed:   embed,
-	})
+	}); err != nil {
+		log.Printf("[WARN] Failed to send offline alert for %s to channel %s: %v", state.Name, channelID, err)
+	}
 }
 
 func (t *Tracker) sendOnlineRecoveryAlert(state ServerState, downtime time.Duration, channelID string) {
@@ -267,7 +270,9 @@ func (t *Tracker) sendOnlineRecoveryAlert(state ServerState, downtime time.Durat
 		},
 	}
 
-	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
+	if _, err := t.session.ChannelMessageSendEmbed(channelID, embed); err != nil {
+		log.Printf("[WARN] Failed to send online recovery alert for %s to channel %s: %v", state.Name, channelID, err)
+	}
 }
 
 func (t *Tracker) sendRestartAlert(state ServerState, channelID string) {
@@ -292,7 +297,9 @@ func (t *Tracker) sendRestartAlert(state ServerState, channelID string) {
 		},
 	}
 
-	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
+	if _, err := t.session.ChannelMessageSendEmbed(channelID, embed); err != nil {
+		log.Printf("[WARN] Failed to send alert for %s to channel %s: %v", state.Name, channelID, err)
+	}
 }
 
 func formatDuration(d time.Duration) string {
@@ -328,7 +335,7 @@ func (t *Tracker) sendUpdateAlert(state ServerState, oldVer, newVer, channelID s
 			},
 			{
 				Name:   "🕒 Время обновления",
-				Value:  time.Now().Format("15:04:05 MSK"),
+				Value:  fmt.Sprintf("<t:%d:T>", time.Now().Unix()),
 				Inline: true,
 			},
 		},
@@ -337,7 +344,9 @@ func (t *Tracker) sendUpdateAlert(state ServerState, oldVer, newVer, channelID s
 		},
 	}
 
-	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
+	if _, err := t.session.ChannelMessageSendEmbed(channelID, embed); err != nil {
+		log.Printf("[WARN] Failed to send alert for %s to channel %s: %v", state.Name, channelID, err)
+	}
 }
 
 func (t *Tracker) sendMaintenanceAlert(state ServerState, blocked bool, channelID string) {
@@ -379,6 +388,8 @@ func (t *Tracker) sendMaintenanceAlert(state ServerState, blocked bool, channelI
 		},
 	}
 
-	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
+	if _, err := t.session.ChannelMessageSendEmbed(channelID, embed); err != nil {
+		log.Printf("[WARN] Failed to send alert for %s to channel %s: %v", state.Name, channelID, err)
+	}
 }
 

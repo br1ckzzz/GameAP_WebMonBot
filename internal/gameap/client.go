@@ -1,6 +1,7 @@
 package gameap
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,12 +15,11 @@ import (
 
 // Client interacts with the GameAP WebMonitoring Bot API.
 type Client struct {
-	baseURL         string
-	apiToken        string
-	httpClient      *http.Client
-	stickyMu        sync.RWMutex
-	stickyEndpoint  string
-	stickyTelemetry string
+	baseURL        string
+	apiToken       string
+	httpClient     *http.Client
+	stickyMu       sync.RWMutex
+	stickyEndpoint string
 }
 
 // NewClient initializes a new GameAP API client.
@@ -46,7 +46,6 @@ func (c *Client) UpdateCredentials(baseURL, apiToken string) {
 	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.apiToken = strings.TrimSpace(apiToken)
 	c.stickyEndpoint = ""
-	c.stickyTelemetry = ""
 }
 
 // GetBaseURL returns the configured base URL.
@@ -340,7 +339,7 @@ func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) e
 	}
 
 	for _, ep := range endpoints {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, strings.NewReader(string(data)))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(data))
 		if err != nil {
 			continue
 		}
