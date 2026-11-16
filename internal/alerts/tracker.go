@@ -129,7 +129,8 @@ func (t *Tracker) ProcessUpdates(servers []gameap.PublicServerDTO) {
 				state.OfflineAlertSent = true
 				state.StatusChangedAt = now
 				if t.cfg.Notifications.NotifyOnOffline {
-					go t.sendOfflineAlert(state, t.alertsChannelID, t.alertRoleID)
+					snapshot := *state
+					go t.sendOfflineAlert(snapshot, t.alertsChannelID, t.alertRoleID)
 				}
 			}
 		} else if srv.Status == "online" {
@@ -141,14 +142,16 @@ func (t *Tracker) ProcessUpdates(servers []gameap.PublicServerDTO) {
 				state.StatusChangedAt = now
 				state.LastSeenOnlineAt = now
 				if t.cfg.Notifications.NotifyOnOnline {
-					go t.sendOnlineRecoveryAlert(state, downtime, t.alertsChannelID)
+					snapshot := *state
+					go t.sendOnlineRecoveryAlert(snapshot, downtime, t.alertsChannelID)
 				}
 			} else if state.OfflineFailCount > 0 && state.OfflineFailCount < threshold {
 				// Server dipped offline for 1 poll and quickly recovered: restart detected
 				state.OfflineFailCount = 0
 				state.LastSeenOnlineAt = now
 				if t.cfg.Notifications.NotifyOnRestart {
-					go t.sendRestartAlert(state, t.alertsChannelID)
+					snapshot := *state
+					go t.sendRestartAlert(snapshot, t.alertsChannelID)
 				}
 			}
 
@@ -159,15 +162,18 @@ func (t *Tracker) ProcessUpdates(servers []gameap.PublicServerDTO) {
 		// Detect game/server version or build ID update
 		if t.cfg.Notifications.NotifyOnUpdate {
 			if state.LastVersion != "" && srv.Version != "" && srv.Version != state.LastVersion {
-				go t.sendUpdateAlert(state, state.LastVersion, srv.Version, t.alertsChannelID)
+				snapshot := *state
+				go t.sendUpdateAlert(snapshot, state.LastVersion, srv.Version, t.alertsChannelID)
 			} else if state.LastBuildID != "" && srv.BuildID != "" && srv.BuildID != state.LastBuildID {
-				go t.sendUpdateAlert(state, fmt.Sprintf("Build %s", state.LastBuildID), fmt.Sprintf("Build %s", srv.BuildID), t.alertsChannelID)
+				snapshot := *state
+				go t.sendUpdateAlert(snapshot, fmt.Sprintf("Build %s", state.LastBuildID), fmt.Sprintf("Build %s", srv.BuildID), t.alertsChannelID)
 			}
 		}
 
 		// Detect maintenance / blocked status transitions
 		if srv.Blocked != state.LastBlocked {
-			go t.sendMaintenanceAlert(state, srv.Blocked, t.alertsChannelID)
+			snapshot := *state
+			go t.sendMaintenanceAlert(snapshot, srv.Blocked, t.alertsChannelID)
 		}
 
 		state.LastVersion = srv.Version
@@ -178,8 +184,8 @@ func (t *Tracker) ProcessUpdates(servers []gameap.PublicServerDTO) {
 	t.isFirstCheck = false
 }
 
-func (t *Tracker) sendOfflineAlert(state *ServerState, channelID, roleID string) {
-	if channelID == "" {
+func (t *Tracker) sendOfflineAlert(state ServerState, channelID, roleID string) {
+	if t.session == nil || channelID == "" {
 		return
 	}
 
@@ -233,8 +239,8 @@ func (t *Tracker) sendOfflineAlert(state *ServerState, channelID, roleID string)
 	})
 }
 
-func (t *Tracker) sendOnlineRecoveryAlert(state *ServerState, downtime time.Duration, channelID string) {
-	if channelID == "" {
+func (t *Tracker) sendOnlineRecoveryAlert(state ServerState, downtime time.Duration, channelID string) {
+	if t.session == nil || channelID == "" {
 		return
 	}
 
@@ -264,8 +270,8 @@ func (t *Tracker) sendOnlineRecoveryAlert(state *ServerState, downtime time.Dura
 	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
 }
 
-func (t *Tracker) sendRestartAlert(state *ServerState, channelID string) {
-	if channelID == "" {
+func (t *Tracker) sendRestartAlert(state ServerState, channelID string) {
+	if t.session == nil || channelID == "" {
 		return
 	}
 
@@ -299,8 +305,8 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d сек.", s)
 }
 
-func (t *Tracker) sendUpdateAlert(state *ServerState, oldVer, newVer, channelID string) {
-	if channelID == "" {
+func (t *Tracker) sendUpdateAlert(state ServerState, oldVer, newVer, channelID string) {
+	if t.session == nil || channelID == "" {
 		return
 	}
 
@@ -334,8 +340,8 @@ func (t *Tracker) sendUpdateAlert(state *ServerState, oldVer, newVer, channelID 
 	_, _ = t.session.ChannelMessageSendEmbed(channelID, embed)
 }
 
-func (t *Tracker) sendMaintenanceAlert(state *ServerState, blocked bool, channelID string) {
-	if channelID == "" {
+func (t *Tracker) sendMaintenanceAlert(state ServerState, blocked bool, channelID string) {
+	if t.session == nil || channelID == "" {
 		return
 	}
 

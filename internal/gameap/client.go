@@ -51,6 +51,8 @@ func (c *Client) UpdateCredentials(baseURL, apiToken string) {
 
 // GetBaseURL returns the configured base URL.
 func (c *Client) GetBaseURL() string {
+	c.stickyMu.RLock()
+	defer c.stickyMu.RUnlock()
 	return c.baseURL
 }
 
@@ -60,6 +62,7 @@ func (c *Client) GetBaseURL() string {
 func (c *Client) FetchServers(ctx context.Context) (*MonitoringResponse, error) {
 	c.stickyMu.RLock()
 	pinnedEndpoint := c.stickyEndpoint
+	baseURL := c.baseURL
 	c.stickyMu.RUnlock()
 
 	// If we already discovered and pinned a working endpoint, use it directly
@@ -81,7 +84,7 @@ func (c *Client) FetchServers(ctx context.Context) (*MonitoringResponse, error) 
 		}
 	}
 
-	base := strings.TrimRight(c.baseURL, "/")
+	base := strings.TrimRight(baseURL, "/")
 	var baseCandidates []string
 	baseCandidates = append(baseCandidates, base)
 
@@ -173,8 +176,12 @@ func (c *Client) doFetch(ctx context.Context, endpoint string) (*MonitoringRespo
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0")
 
-	if c.apiToken != "" {
-		req.Header.Set("X-WebMon-Token", c.apiToken)
+	c.stickyMu.RLock()
+	apiToken := c.apiToken
+	c.stickyMu.RUnlock()
+
+	if apiToken != "" {
+		req.Header.Set("X-WebMon-Token", apiToken)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -270,7 +277,12 @@ type QueryTelemetryPayload struct {
 // PushTelemetry sends live query telemetry to GameAP WebMonitoring plugin,
 // keeping web UI in sync and preventing stuck online status during node crashes.
 func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) error {
-	if c.baseURL == "" || len(servers) == 0 {
+	c.stickyMu.RLock()
+	baseURL := c.baseURL
+	apiToken := c.apiToken
+	c.stickyMu.RUnlock()
+
+	if baseURL == "" || len(servers) == 0 {
 		return nil
 	}
 
@@ -297,7 +309,7 @@ func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) e
 		return err
 	}
 
-	base := strings.TrimRight(c.baseURL, "/")
+	base := strings.TrimRight(baseURL, "/")
 	var baseCandidates []string
 	baseCandidates = append(baseCandidates, base)
 	if strings.Contains(base, "/monitoring") {
@@ -334,8 +346,8 @@ func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) e
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0")
-		if c.apiToken != "" {
-			req.Header.Set("X-WebMon-Token", c.apiToken)
+		if apiToken != "" {
+			req.Header.Set("X-WebMon-Token", apiToken)
 		}
 		resp, err := c.httpClient.Do(req)
 		if err == nil {

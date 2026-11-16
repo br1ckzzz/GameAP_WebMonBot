@@ -2,8 +2,10 @@ package gameap
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -87,5 +89,62 @@ func TestClientFetchServers_MetadataFields(t *testing.T) {
 	if resp.Announcement == nil || !resp.Announcement.Enabled || resp.Announcement.Text != "Server tournament on Saturday!" {
 		t.Errorf("announcement parsing failed: %+v", resp.Announcement)
 	}
+}
+
+func TestClientConcurrentCredentialsAndRequests(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"total_servers":1,"online_count":1,"servers":[{"id":1,"name":"Test","status":"online"}]}`))
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "initial-token", 2*time.Second)
+	servers := []PublicServerDTO{
+		{ID: 1, Status: "online", Players: 5, MaxPlayers: 10},
+	}
+
+	var wg sync.WaitGroup
+
+	// Concurrent UpdateCredentials
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 40; i++ {
+			client.UpdateCredentials(ts.URL, fmt.Sprintf("token-%d", i))
+		}
+	}()
+
+	// Concurrent GetBaseURL
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 40; i++ {
+			_ = client.GetBaseURL()
+		}
+	}()
+
+	// Concurrent FetchServers / doFetch
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			_, _ = client.FetchServers(context.Background())
+		}
+	}()
+
+	// Concurrent PushTelemetry
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			_ = client.PushTelemetry(context.Background(), servers)
+		}
+	}()
+
+	wg.Wait()
 }
 

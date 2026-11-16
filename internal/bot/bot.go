@@ -875,8 +875,13 @@ func (b *Bot) UpdateNodesStatus(ctx context.Context) error {
 		}
 	}
 
-	if len(servers) == 0 && len(b.lastKnownServers) > 0 {
-		servers = b.lastKnownServers
+	if len(servers) == 0 {
+		b.mu.Lock()
+		if len(b.lastKnownServers) > 0 {
+			servers = make([]gameap.PublicServerDTO, len(b.lastKnownServers))
+			copy(servers, b.lastKnownServers)
+		}
+		b.mu.Unlock()
 	}
 
 	var configNodes []config.NodeConfig

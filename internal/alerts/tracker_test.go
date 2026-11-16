@@ -1,12 +1,25 @@
 package alerts
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/bwmarrin/discordgo"
 
 	"gameap-webmon-bot/internal/config"
 	"gameap-webmon-bot/internal/gameap"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
 
 func TestTrackerLifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
@@ -131,4 +144,79 @@ func TestFormatDuration(t *testing.T) {
 
 func parseDuration(s string) (timeDuration time.Duration, err error) {
 	return time.ParseDuration(s)
+}
+
+func TestTrackerConcurrentProcessUpdates(t *testing.T) {
+	session, err := discordgo.New("Bot test-token")
+	if err != nil {
+		t.Fatalf("discordgo.New failed: %v", err)
+	}
+	session.Client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"id":"1"}`)),
+			}, nil
+		}),
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Notifications.Enabled = true
+	cfg.Notifications.AlertsChannelID = "ch_alerts_test"
+	cfg.Notifications.AlertRoleID = "12345"
+	cfg.Notifications.OfflineConfirmThreshold = 1
+	cfg.Notifications.NotifyOnOffline = true
+	cfg.Notifications.NotifyOnOnline = true
+	cfg.Notifications.NotifyOnRestart = true
+	cfg.Notifications.NotifyOnUpdate = true
+
+	tracker := NewTracker(cfg, session)
+
+	// Baseline update
+	tracker.ProcessUpdates([]gameap.PublicServerDTO{
+		{
+			ID:       101,
+			Name:     "Server-0",
+			GameCode: "cs2",
+			GameName: "Counter-Strike 2",
+			Address:  "127.0.0.1",
+			Port:     27015,
+			Status:   "online",
+			Version:  "1.0.0",
+			BuildID:  "100",
+			Blocked:  false,
+		},
+	})
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for i := 0; i < 30; i++ {
+				status := "online"
+				if i%2 == 0 {
+					status = "offline"
+				}
+				tracker.ProcessUpdates([]gameap.PublicServerDTO{
+					{
+						ID:       101,
+						Name:     fmt.Sprintf("Server-%d-%d", workerID, i),
+						GameCode: "cs2",
+						GameName: "Counter-Strike 2",
+						Address:  fmt.Sprintf("10.0.%d.%d", workerID, i%250),
+						Port:     27015 + (i % 10),
+						Status:   status,
+						Version:  fmt.Sprintf("1.%d.%d", workerID, i),
+						BuildID:  fmt.Sprintf("%d", 100+i),
+						Blocked:  i%3 == 0,
+					},
+				})
+			}
+		}(g)
+	}
+	wg.Wait()
+	// Allow spawned alert goroutines to finish reading their state snapshots
+	time.Sleep(50 * time.Millisecond)
 }
