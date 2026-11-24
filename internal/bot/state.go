@@ -69,7 +69,7 @@ func LoadState(filePath string) *State {
 	if err := json.Unmarshal(data, s); err != nil {
 		log.Printf("[WARN] Failed to parse state file %s: %v", filePath, err)
 		corruptPath := filePath + ".corrupt"
-		if writeErr := os.WriteFile(corruptPath, data, 0644); writeErr != nil {
+		if writeErr := os.WriteFile(corruptPath, data, 0600); writeErr != nil {
 			log.Printf("[WARN] Failed to back up corrupted state file to %s: %v", corruptPath, writeErr)
 		} else {
 			log.Printf("[WARN] Backed up corrupted state file to %s", corruptPath)
@@ -113,7 +113,7 @@ func (s *State) SaveLocked() error {
 	}
 
 	tmpFile := s.filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return err
 	}
 
@@ -505,6 +505,21 @@ func (s *State) GetNodesMessageID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.NodesMessageID
+}
+
+// UnbindAll clears all bound dashboard, game, server, forum, and nodes channels and message IDs.
+func (s *State) UnbindAll() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ChannelID = ""
+	s.GameChannels = make(map[string]string)
+	s.ServerChannels = make(map[uint64]string)
+	s.ForumChannelID = ""
+	s.ForumThreadIDs = make(map[string]string)
+	s.NodesChannelID = ""
+	s.NodesMessageID = ""
+	s.MessageIDs = make(map[string]string)
+	return s.SaveLocked()
 }
 
 // generateCustomServerID generates a stable unique ID >= 100000 based on address and port.

@@ -42,32 +42,44 @@ func ResolveProtocol(gameCodeOrName string) QueryProtocol {
 // For A2S servers, it handles query port offsets with automatic fallback.
 func QueryServerAuto(gameCode, address string, port int, timeout time.Duration) (*ServerInfo, error) {
 	proto := ResolveProtocol(gameCode)
+	start := time.Now()
+	var info *ServerInfo
+	var err error
 
 	switch proto {
 	case ProtoSAMP:
-		return QuerySAMP(address, port, timeout)
+		info, err = QuerySAMP(address, port, timeout)
 
 	case ProtoBedrock:
-		return QueryBedrock(address, port, timeout)
+		info, err = QueryBedrock(address, port, timeout)
 
 	case ProtoMinecraftJava:
-		return QueryMinecraft(address, port, timeout)
+		info, err = QueryMinecraft(address, port, timeout)
 
 	case ProtoQuake:
-		return QueryQuake(address, port, timeout)
+		info, err = QueryQuake(address, port, timeout)
 
 	case ProtoFiveM:
-		return QueryFiveM(address, port, timeout)
+		info, err = QueryFiveM(address, port, timeout)
 
 	case ProtoA2S:
 		fallthrough
 	default:
 		qPort := GetQueryPort(gameCode, port)
-		info, err := QueryServer(address, qPort, timeout)
+		info, err = QueryServer(address, qPort, timeout)
 		if err != nil && qPort != port {
 			// Fallback to primary port
+			start = time.Now()
 			info, err = QueryServer(address, port, timeout)
 		}
-		return info, err
 	}
+
+	if err == nil && info != nil && info.Ping <= 0 {
+		ms := int(time.Since(start).Milliseconds())
+		if ms <= 0 {
+			ms = 1
+		}
+		info.Ping = ms
+	}
+	return info, err
 }

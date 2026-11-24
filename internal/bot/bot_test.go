@@ -75,3 +75,21 @@ func TestCleanupStaleMessages_PreservesGameGroup(t *testing.T) {
 		t.Errorf("expected stale non-game_group_ key to be removed")
 	}
 }
+
+func TestStateUnbindAll(t *testing.T) {
+	tmpDir := t.TempDir()
+	st := LoadState(tmpDir + "/state.json")
+	_ = st.BindChannel("g1", "ch_gen")
+	_ = st.BindGameChannel("g1", "cs2", "ch_cs2")
+	_ = st.BindServerChannel("g1", 1, "ch_srv1")
+	_ = st.SetForumChannel("ch_forum")
+	_ = st.SetNodesChannelID("ch_nodes")
+	_ = st.SetMessageID("game_group_cs2_ch_cs2", "msg_grp")
+
+	if err := st.UnbindAll(); err != nil {
+		t.Fatalf("UnbindAll failed: %v", err)
+	}
+	if st.GetChannelID() != "" || len(st.GetGameChannels()) != 0 || len(st.GetServerChannels()) != 0 || st.GetForumChannel() != "" || st.GetNodesChannelID() != "" || len(st.GetAllMessageIDs()) != 0 {
+		t.Errorf("expected all channel bindings and message IDs to be cleared after UnbindAll")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,5 +147,22 @@ func TestClientConcurrentCredentialsAndRequests(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+func TestClientBlocksCrossHostRedirectToRestrictedIP(t *testing.T) {
+	// Simulate redirector at 127.0.0.1 redirecting to another restricted host (e.g. 169.254.169.254)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "tok", 2*time.Second)
+	_, err := client.doFetch(context.Background(), ts.URL)
+	if err == nil {
+		t.Fatalf("expected redirect to restricted IP to be blocked, got nil error")
+	}
+	if !strings.Contains(err.Error(), "blocked redirect") {
+		t.Errorf("expected 'blocked redirect' error, got: %v", err)
+	}
 }
 

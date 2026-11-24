@@ -37,7 +37,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          TAG="${GITHUB_REF_NAME:-v1.0.0-rc1}"
+          TAG="${GITHUB_REF_NAME:-v1.0.1}"
           VERSION="${TAG#v}"
           echo "Building GameAP WebMonBot version: ${VERSION} (Tag: ${TAG})"
 

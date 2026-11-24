@@ -158,7 +158,7 @@ func (h *CommandHandler) GetSlashCommands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Name:        "unbind",
-					Description: "Отвязать отдельную игру, сервер или общее табло от канала",
+					Description: "Отвязать отдельную игру, сервер, все привязки или общее табло от канала",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
@@ -171,6 +171,12 @@ func (h *CommandHandler) GetSlashCommands() []*discordgo.ApplicationCommand {
 							Type:        discordgo.ApplicationCommandOptionInteger,
 							Name:        "server",
 							Description: "ID сервера для отвязки персональной карточки (например 1)",
+							Required:    false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionBoolean,
+							Name:        "all",
+							Description: "Снять вообще все привязки каналов, игр, серверов, форума и нод",
 							Required:    false,
 						},
 					},
@@ -401,8 +407,8 @@ func (h *CommandHandler) GetSlashCommands() []*discordgo.ApplicationCommand {
 					},
 				},
 				{
-					Name:        "nodes_channel",
-					Description: "Привязать канал для мониторинга выделенных серверов (Нод)",
+					Name:        "nodes",
+					Description: "Привязать или отвязать канал мониторинга хост-нод (выделенных серверов)",
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Options: []*discordgo.ApplicationCommandOption{
 						{
@@ -545,6 +551,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 	case "unbind":
 		gameArg := ""
 		var serverArg uint64
+		allArg := false
 		if len(data.Options) > 0 && len(data.Options[0].Options) > 0 {
 			for _, opt := range data.Options[0].Options {
 				if opt.Name == "game" {
@@ -555,12 +562,19 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 					if srvID, ok := opt.Value.(float64); ok {
 						serverArg = uint64(srvID)
 					}
+				} else if opt.Name == "all" {
+					if b, ok := opt.Value.(bool); ok {
+						allArg = b
+					}
 				}
 			}
 		}
 
 		var msgText string
-		if serverArg > 0 {
+		if allArg {
+			_ = h.state.UnbindAll()
+			msgText = "🗑️ Все привязки каналов, игр, серверов, форума и нод успешно удалены."
+		} else if serverArg > 0 {
 			_ = h.state.UnbindServerChannel(serverArg)
 			msgText = fmt.Sprintf("🗑️ Привязка для сервера **#%d** успешно удалена.", serverArg)
 		} else if gameArg != "" && !strings.EqualFold(gameArg, "all") && !strings.EqualFold(gameArg, "все") {
@@ -672,7 +686,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 						if nodesCh != "" {
 							return fmt.Sprintf("<#%s>", nodesCh)
 						}
-						return "Не привязано (используйте `/mon nodes_channel channel:#канал`)"
+						return "Не привязано (используйте `/mon nodes channel:#канал`)"
 					}(),
 					Inline: false,
 				},
@@ -793,18 +807,25 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 
 		h.mu.Lock()
 		refreshFn := h.refreshFunc
+		refreshNodesFn := h.refreshNodesFunc
 		h.mu.Unlock()
 
 		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
 			if refreshFn != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
 				if err := refreshFn(ctx); err != nil {
 					h.editResponse(s, i, fmt.Sprintf("⚠️ Не удалось обновить табло: %v", err))
 					return
 				}
 			} else {
 				h.triggerManualRefresh()
+			}
+			if refreshNodesFn != nil {
+				if err := refreshNodesFn(ctx); err != nil {
+					log.Printf("[WARN] Failed to refresh nodes during /mon refresh: %v", err)
+				}
 			}
 
 			h.editResponse(s, i, "✅ Табло мониторинга успешно обновлено!")
@@ -907,7 +928,7 @@ func (h *CommandHandler) handleApplicationCommand(s *discordgo.Session, i *disco
 		}
 		h.handleMonGroup(s, i, opts)
 
-	case "nodes_channel":
+	case "nodes", "nodes_channel":
 		var opts []*discordgo.ApplicationCommandInteractionDataOption
 		if len(data.Options) > 0 && len(data.Options[0].Options) > 0 {
 			opts = data.Options[0].Options
@@ -2137,8 +2158,12 @@ func (h *CommandHandler) handleMonGroup(s *discordgo.Session, i *discordgo.Inter
 		}
 	}
 
-	// Also add matching custom servers
+	// Also add matching custom servers using live cached status when available
 	for _, cs := range h.state.GetCustomServers() {
+		if cached, ok := h.GetCachedServer(cs.ID); ok {
+			allServers = append(allServers, cached)
+			continue
+		}
 		allServers = append(allServers, gameap.PublicServerDTO{
 			ID:       cs.ID,
 			Name:     cs.Name,
@@ -2146,7 +2171,7 @@ func (h *CommandHandler) handleMonGroup(s *discordgo.Session, i *discordgo.Inter
 			GameName: cs.GameName,
 			Address:  cs.Address,
 			Port:     cs.Port,
-			Status:   "online",
+			Status:   "offline",
 			IconURL:  cs.IconURL,
 		})
 	}

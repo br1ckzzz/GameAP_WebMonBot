@@ -17,7 +17,7 @@ import (
 
 const AppName = "GameAP WebMonBot"
 
-var AppVersion = "1.0.0-rc1"
+var AppVersion = "1.0.1"
 
 func main() {
 	configPath := flag.String("config", "", "Path to configuration JSON file (defaults to config.json)")

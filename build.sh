@@ -10,10 +10,10 @@ echo " Building GameAP WebMonBot (Go)"
 echo "=========================================="
 
 echo "-> Compiling Linux binary..."
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$BIN_DIR/webmonbot-linux-amd64" ./cmd/bot
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.AppVersion=1.0.1" -o "$BIN_DIR/webmonbot-linux-amd64" ./cmd/bot
 
 echo "-> Compiling Windows binary..."
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o "$BIN_DIR/webmonbot.exe" ./cmd/bot
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.AppVersion=1.0.1" -o "$BIN_DIR/webmonbot.exe" ./cmd/bot
 
 echo ""
 echo "Build complete! Binaries:"

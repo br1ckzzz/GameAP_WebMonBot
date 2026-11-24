@@ -158,3 +158,37 @@ func TestSanitizeSetupError(t *testing.T) {
 		})
 	}
 }
+
+func TestSlashCommandsIncludeNodesAndUnbindAll(t *testing.T) {
+	h := &CommandHandler{}
+	cmds := h.GetSlashCommands()
+	if len(cmds) == 0 {
+		t.Fatalf("expected slash commands")
+	}
+	monCmd := cmds[0]
+	var foundNodes, foundNodesChannel, foundUnbindAll bool
+	for _, opt := range monCmd.Options {
+		if opt.Name == "nodes" {
+			foundNodes = true
+		}
+		if opt.Name == "nodes_channel" {
+			foundNodesChannel = true
+		}
+		if opt.Name == "unbind" {
+			for _, uo := range opt.Options {
+				if uo.Name == "all" {
+					foundUnbindAll = true
+				}
+			}
+		}
+	}
+	if !foundNodes {
+		t.Errorf("expected subcommand 'nodes' to be registered")
+	}
+	if foundNodesChannel {
+		t.Errorf("expected legacy subcommand 'nodes_channel' not to be registered in GetSlashCommands")
+	}
+	if !foundUnbindAll {
+		t.Errorf("expected 'unbind' subcommand to include boolean option 'all'")
+	}
+}

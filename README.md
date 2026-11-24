@@ -1,6 +1,6 @@
 # GameAP WebMonBot 🎮🤖
 
-[![Version](https://img.shields.io/badge/version-1.0.0--rc1-blue.svg)](https://github.com/br1ckzzz/GameAP_WebMonBot/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/br1ckzzz/GameAP_WebMonBot/releases)
 [![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8.svg)](https://golang.org)
 [![Discord API](https://img.shields.io/badge/Discord%20API-v10-5865F2.svg)](https://discord.com/developers/docs)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

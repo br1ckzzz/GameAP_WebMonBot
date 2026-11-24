@@ -20,7 +20,7 @@ var (
 	a2sInfoRequest = []byte{0xFF, 0xFF, 0xFF, 0xFF, 0x54, 'S', 'o', 'u', 'r', 'c', 'e', ' ', 'E', 'n', 'g', 'i', 'n', 'e', ' ', 'Q', 'u', 'e', 'r', 'y', 0x00}
 )
 
-// ServerInfo holds parsed results from an A2S_INFO UDP query probe.
+// ServerInfo holds parsed results from a game server query probe.
 type ServerInfo struct {
 	Name       string
 	Map        string
@@ -29,6 +29,7 @@ type ServerInfo struct {
 	Players    int
 	MaxPlayers int
 	Bots       int
+	Ping       int
 }
 
 func readNullString(buf *bytes.Buffer) (string, error) {
@@ -165,6 +166,7 @@ func QueryServer(address string, port int, timeout time.Duration) (*ServerInfo, 
 	}
 
 	// 1. Send initial A2S_INFO query
+	rttStart := time.Now()
 	if _, err := conn.Write(a2sInfoRequest); err != nil {
 		return nil, err
 	}
@@ -182,6 +184,7 @@ func QueryServer(address string, port int, timeout time.Duration) (*ServerInfo, 
 		challenge := data[5:9]
 		reqWithChallenge := append(append([]byte{}, a2sInfoRequest...), challenge...)
 
+		rttStart = time.Now()
 		if _, err := conn.Write(reqWithChallenge); err != nil {
 			return nil, err
 		}
@@ -193,7 +196,17 @@ func QueryServer(address string, port int, timeout time.Duration) (*ServerInfo, 
 		data = recvBuf[:n]
 	}
 
-	return ParseA2SResponse(data)
+	rttMs := int(time.Since(rttStart).Milliseconds())
+	if rttMs <= 0 {
+		rttMs = 1
+	}
+
+	info, err := ParseA2SResponse(data)
+	if err != nil {
+		return nil, err
+	}
+	info.Ping = rttMs
+	return info, nil
 }
 
 // GetQueryPort returns the recommended query port for a given game and base game port.
@@ -201,7 +214,7 @@ func GetQueryPort(gameCode string, port int) int {
 	return catalog.GetQueryPort(gameCode, port)
 }
 
-// EnrichServers probes online servers in parallel with A2S_INFO queries, updating Map and Players.
+// EnrichServers probes online servers in parallel with A2S_INFO queries, updating Map, Players, and Ping.
 func EnrichServers(servers []gameap.PublicServerDTO, timeout time.Duration) []gameap.PublicServerDTO {
 	if len(servers) == 0 {
 		return servers
@@ -211,6 +224,7 @@ func EnrichServers(servers []gameap.PublicServerDTO, timeout time.Duration) []ga
 	copy(result, servers)
 
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
 
 	for i := range result {
 		// Only probe online servers with valid IP and port
@@ -221,6 +235,8 @@ func EnrichServers(servers []gameap.PublicServerDTO, timeout time.Duration) []ga
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
 			srv := &result[idx]
 			info, err := QueryServerAuto(srv.GameCode, srv.Address, srv.Port, timeout)
@@ -232,6 +248,9 @@ func EnrichServers(servers []gameap.PublicServerDTO, timeout time.Duration) []ga
 				if info.MaxPlayers > 0 {
 					srv.MaxPlayers = info.MaxPlayers
 					srv.Players = info.Players
+				}
+				if info.Ping > 0 {
+					srv.Ping = info.Ping
 				}
 			}
 		}(i)

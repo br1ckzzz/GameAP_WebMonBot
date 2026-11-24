@@ -44,7 +44,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	dynamicURL := fmt.Sprintf("http://%s/dynamic.json", hostPort)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, dynamicURL, nil)
 	if err == nil {
-		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.0")
+		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.1")
 		resp, err := client.Do(req)
 		if err == nil {
 			defer resp.Body.Close()
@@ -79,7 +79,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	if err != nil {
 		return nil, fmt.Errorf("building request for %s: %w", infoURL, err)
 	}
-	reqInfo.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.0")
+	reqInfo.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.1")
 	respInfo, err := client.Do(reqInfo)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to fivem %s: %w", infoURL, err)
@@ -100,7 +100,7 @@ func QueryFiveM(address string, port int, timeout time.Duration) (*ServerInfo, e
 	reqPlayers, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, playersURL, nil)
 	playerCount := 0
 	if reqPlayers != nil {
-		reqPlayers.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.0")
+		reqPlayers.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.1")
 		if respPlayers, err := client.Do(reqPlayers); err == nil {
 			defer respPlayers.Body.Close()
 			if respPlayers.StatusCode == http.StatusOK {

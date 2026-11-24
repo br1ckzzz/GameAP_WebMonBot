@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -22,6 +23,18 @@ type Client struct {
 	stickyEndpoint string
 }
 
+func isDisallowedRedirectIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+	}
+	return false
+}
+
 // NewClient initializes a new GameAP API client.
 func NewClient(baseURL, apiToken string, timeout time.Duration) *Client {
 	if timeout <= 0 {
@@ -34,6 +47,39 @@ func NewClient(baseURL, apiToken string, timeout time.Duration) *Client {
 			Timeout: timeout,
 			Transport: &http.Transport{
 				DisableCompression: true,
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				if req.URL == nil {
+					return fmt.Errorf("redirect with nil URL")
+				}
+				scheme := strings.ToLower(req.URL.Scheme)
+				if scheme != "http" && scheme != "https" {
+					return fmt.Errorf("blocked redirect to unsupported scheme %q", req.URL.Scheme)
+				}
+				targetHost := strings.TrimSpace(req.URL.Hostname())
+				if len(via) > 0 && via[0].URL != nil && strings.EqualFold(targetHost, strings.TrimSpace(via[0].URL.Hostname())) {
+					return nil
+				}
+				if strings.EqualFold(targetHost, "localhost") || strings.HasSuffix(strings.ToLower(targetHost), ".localhost") {
+					return fmt.Errorf("blocked redirect to localhost %q", targetHost)
+				}
+				if ip := net.ParseIP(targetHost); ip != nil {
+					if isDisallowedRedirectIP(ip) {
+						return fmt.Errorf("blocked redirect to restricted IP %q", targetHost)
+					}
+					return nil
+				}
+				if ips, err := net.LookupIP(targetHost); err == nil {
+					for _, ip := range ips {
+						if isDisallowedRedirectIP(ip) {
+							return fmt.Errorf("blocked redirect to host %q resolving to restricted IP %s", targetHost, ip.String())
+						}
+					}
+				}
+				return nil
 			},
 		},
 	}
@@ -173,7 +219,7 @@ func (c *Client) doFetch(ctx context.Context, endpoint string) (*MonitoringRespo
 	}
 
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0")
+	req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.1")
 
 	c.stickyMu.RLock()
 	apiToken := c.apiToken
@@ -344,7 +390,7 @@ func (c *Client) PushTelemetry(ctx context.Context, servers []PublicServerDTO) e
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0")
+		req.Header.Set("User-Agent", "GameAP-WebMonBot/1.0.1")
 		if apiToken != "" {
 			req.Header.Set("X-WebMon-Token", apiToken)
 		}

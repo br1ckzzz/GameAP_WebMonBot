@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"gameap-webmon-bot/internal/alerts"
+	"gameap-webmon-bot/internal/catalog"
 	"gameap-webmon-bot/internal/config"
 	"gameap-webmon-bot/internal/gameap"
 	"gameap-webmon-bot/internal/query"
@@ -228,6 +229,7 @@ func (b *Bot) queryCustomServers(timeout time.Duration) []gameap.PublicServerDTO
 			status := "offline"
 			players := 0
 			maxPlayers := 0
+			ping := 0
 			mapName := "—"
 			displayName := srv.Name
 			if displayName == "" {
@@ -238,6 +240,7 @@ func (b *Bot) queryCustomServers(timeout time.Duration) []gameap.PublicServerDTO
 				status = "online"
 				players = info.Players
 				maxPlayers = info.MaxPlayers
+				ping = info.Ping
 				if info.Map != "" {
 					mapName = info.Map
 				}
@@ -262,6 +265,7 @@ func (b *Bot) queryCustomServers(timeout time.Duration) []gameap.PublicServerDTO
 				Status:     status,
 				Players:    players,
 				MaxPlayers: maxPlayers,
+				Ping:       ping,
 				Map:        mapName,
 				ConnectURL: connectURL,
 				IconURL:    srv.IconURL,
@@ -303,6 +307,9 @@ func (b *Bot) enrichServersWithHealthcheck(servers []gameap.PublicServerDTO, tim
 				s.Status = "online"
 				s.Players = info.Players
 				s.MaxPlayers = info.MaxPlayers
+				if info.Ping > 0 {
+					s.Ping = info.Ping
+				}
 				if info.Map != "" {
 					s.Map = info.Map
 				}
@@ -314,6 +321,7 @@ func (b *Bot) enrichServersWithHealthcheck(servers []gameap.PublicServerDTO, tim
 				// If 2 or more consecutive probe failures, mark as offline (dead node or crashed server process)
 				if b.queryFailures[s.ID] >= 2 {
 					s.Status = "offline"
+					s.Ping = 0
 				}
 			}
 		}(srv)
@@ -350,7 +358,7 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 		}
 	}
 
-	// Fallback to cached servers if GameAP is unreachable/500/timeout
+	// Fallback to cached servers ONLY if GameAP API failed/unreachable; when GameAP responds, treat it as authoritative
 	if gameapErr != nil {
 		b.mu.Lock()
 		if len(b.lastKnownServers) > 0 {
@@ -359,24 +367,17 @@ func (b *Bot) RefreshDashboard(ctx context.Context) error {
 			log.Printf("[WARN] GameAP API unreachable (%v), using %d cached servers for direct query healthcheck fallback", gameapErr, len(servers))
 		}
 		b.mu.Unlock()
-	} else if len(servers) > 0 {
+	} else if b.gameapClient != nil && b.gameapClient.GetBaseURL() != "" {
 		b.mu.Lock()
-		// Merge returned servers into lastKnownServers to preserve any server that GameAP temporarily omits
-		serverMap := make(map[uint64]gameap.PublicServerDTO, len(b.lastKnownServers)+len(servers))
-		for _, s := range b.lastKnownServers {
-			serverMap[s.ID] = s
-		}
+		activeIDs := make(map[uint64]bool, len(servers))
 		for _, s := range servers {
-			serverMap[s.ID] = s
+			activeIDs[s.ID] = true
 		}
-		merged := make([]gameap.PublicServerDTO, 0, len(serverMap))
-		for _, s := range serverMap {
-			merged = append(merged, s)
+		for id := range b.queryFailures {
+			if !activeIDs[id] {
+				delete(b.queryFailures, id)
+			}
 		}
-		sort.Slice(merged, func(i, j int) bool {
-			return merged[i].ID < merged[j].ID
-		})
-		servers = merged
 		b.lastKnownServers = make([]gameap.PublicServerDTO, len(servers))
 		copy(b.lastKnownServers, servers)
 		b.mu.Unlock()
@@ -641,6 +642,54 @@ func (b *Bot) updateDashboard(servers []gameap.PublicServerDTO, gameapAvailable 
 			embed := RenderGameGroupEmbed(gameName, srvs, b.cfg, webURL)
 			components := BuildServerButtons(srvs)
 			b.syncForumPost(forumChannel, gameName, embed, components)
+		}
+	}
+
+	// 3b. Refresh tracked /mon group embeds live
+	if b.state != nil {
+		for key := range b.state.GetAllMessageIDs() {
+			if !strings.HasPrefix(key, "game_group_") {
+				continue
+			}
+			rest := strings.TrimPrefix(key, "game_group_")
+			lastIdx := strings.LastIndex(rest, "_")
+			if lastIdx <= 0 || lastIdx >= len(rest)-1 {
+				continue
+			}
+			targetCode := strings.ToLower(rest[:lastIdx])
+			groupChannelID := rest[lastIdx+1:]
+			if groupChannelID == "" {
+				continue
+			}
+
+			var matched []gameap.PublicServerDTO
+			var titleName string
+			for _, srv := range servers {
+				srvCode := strings.ToLower(srv.GameCode)
+				if g := catalog.GetGame(srv.GameCode); g != nil {
+					srvCode = strings.ToLower(g.ID)
+				}
+				if srvCode == targetCode {
+					matched = append(matched, srv)
+					if titleName == "" {
+						titleName = srv.GameName
+					}
+				}
+			}
+			if len(matched) == 0 {
+				continue
+			}
+			if titleName == "" {
+				if g := catalog.GetGame(targetCode); g != nil {
+					titleName = g.Name
+				} else {
+					titleName = strings.ToUpper(targetCode)
+				}
+			}
+			embed := RenderGameGroupEmbed(titleName, matched, b.cfg, webURL)
+			buttons := BuildServerButtons(matched)
+			activeKeys[key] = true
+			b.syncDiscordMessage(groupChannelID, key, embed, buttons)
 		}
 	}
 
